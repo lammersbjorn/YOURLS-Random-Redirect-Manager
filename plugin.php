@@ -1,11 +1,12 @@
 <?php
-/*
-Plugin Name: Random Redirect Manager
-Description: Redirects predefined keywords to a random URL from a list with customizable chance percentages. Creates shortlinks automatically.
-Version: 3.1
-Author: Bjorn Lammers
-Author URI: https://github.com/lammersbjorn/YOURLS-Random-Redirect-Manager
-*/
+/**
+ * Plugin Name: Random Redirect Manager
+ * Plugin URI: ttps://github.com/lammersbjorn/YOURLS-Random-Redirect-Manager
+ * Description: Redirects predefined keywords to a random URL from a list with customizable chance percentages. Creates shortlinks automatically.
+ * Version: 3.1
+ * Author: Bjorn Lammers
+ * Author URI: https://github.com/lammersbjorn
+ */
 
 // Prevent direct access to this file
 if (!defined('YOURLS_ABSPATH')) die();
