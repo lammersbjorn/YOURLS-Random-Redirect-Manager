@@ -2,6 +2,8 @@
 
 A plugin for YOURLS that redirects specific keywords to randomly selected URLs from predefined lists with customizable probability weights.
 
+Listed in [![Listed in Awesome YOURLS!](https://img.shields.io/badge/Awesome-YOURLS-C5A3BE)](https://github.com/YOURLS/awesome-yourls/)
+
 ## Features
 
 - Create multiple redirect lists triggered by different keywords
