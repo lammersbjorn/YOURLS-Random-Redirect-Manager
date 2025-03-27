@@ -6,6 +6,8 @@
  * Version: 3.1
  * Author: Bjorn Lammers
  * Author URI: https://github.com/lammersbjorn
+ * License: BSD 3-Clause
+ * License URI: https://opensource.org/licenses/BSD-3-Clause
  */
 
 // Prevent direct access to this file
