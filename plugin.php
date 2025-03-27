@@ -315,19 +315,19 @@ HTML;
     private function displayNewListForm(): void
     {
         echo <<<HTML
-        <div class="redirect-list-row">
-          <div class="redirect-list-col">
-            <label for="new_list_keyword">New Keyword:</label>
-            <input type="text" id="new_list_keyword" name="new_list_keyword" class="text keyword-input"
-              placeholder="Enter keyword (e.g., random-link)"
-              pattern="^[a-zA-Z0-9-_\/]+$"
-              title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
-          </div>
-        </div>
-        <div class="redirect-list-row">
-          <div class="redirect-list-col full">
-            <label>URLs and Chances (%):</label>
-            <div class="url-chances-container">
+    <div class="redirect-list-row">
+      <div class="redirect-list-col">
+        <label for="new_list_keyword">New Keyword:</label>
+        <input type="text" id="new_list_keyword" name="new_list_keyword" class="text keyword-input"
+          placeholder="Enter keyword (e.g., random-link)"
+          pattern="^[a-zA-Z0-9-_\/]+$"
+          title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
+      </div>
+    </div>
+    <div class="redirect-list-row">
+      <div class="redirect-list-col full">
+        <label>URLs and Chances (%):</label>
+        <div class="url-chances-container">
 HTML;
 
         // Display one empty row initially
@@ -343,15 +343,15 @@ HTML;
         );
 
         echo <<<HTML
-            </div> <!-- .url-chances-container -->
-            <div class="url-actions">
-              <button type="button" class="add-url button button-secondary">Add URL</button>
-              <div class="total-percentage">
-                Total: <span class="percentage-sum">0</span>%
-              </div>
-            </div>
+        </div> <!-- .url-chances-container -->
+        <div class="url-actions">
+          <button type="button" class="add-url button button-secondary">Add URL</button>
+          <div class="total-percentage">
+            Total: <span class="percentage-sum">0</span>%
           </div>
         </div>
+      </div>
+    </div>
 HTML;
     }
 
@@ -373,8 +373,10 @@ HTML;
     ): void {
         $style = $isTemplate ? 'style="display: none;"' : "";
         $class = $isTemplate ? "url-chance-row template" : "url-chance-row";
-        $urlRequired = !$isTemplate && empty($urlValue) ? "required" : ""; // Require first URL
-
+        
+        // Only make URL required for existing lists, not for new lists
+        $urlRequired = !$isTemplate && empty($urlValue) && strpos($urlName, 'new_list_urls') === false ? "required" : "";
+    
         echo <<<HTML
         <div class="{$class}" {$style}>
           <input type="url" name="{$urlName}" value="{$urlValue}" class="text url-input" placeholder="https://example.com" {$urlRequired}>
@@ -382,7 +384,7 @@ HTML;
           <span class="percent-sign">%</span>
           <button type="button" class="remove-url button" aria-label="Remove URL">✕</button>
         </div>
-HTML;
+    HTML;
     }
 
     /**
@@ -684,15 +686,14 @@ JS;
 
         // --- Process New List ---
         if (
-            !empty($_POST["new_list_keyword"]) &&
-            !empty($_POST["new_list_urls"])
+            !empty($_POST["new_list_keyword"]) // Only check if keyword is provided
         ) {
             $newKeyword = $this->sanitizeKeyword($_POST["new_list_keyword"]);
-            $urls = $this->sanitizeUrlArray($_POST["new_list_urls"]);
+            $urls = $this->sanitizeUrlArray($_POST["new_list_urls"] ?? []);
             $chances = isset($_POST["new_list_chances"])
                 ? $this->sanitizeChanceArray($_POST["new_list_chances"])
                 : [];
-
+        
             if (!$newKeyword) {
                 $messages["errors"][] =
                     "Invalid or empty keyword provided for the new list. Skipped.";
@@ -708,13 +709,13 @@ JS;
                 // Ensure chances array matches urls array size
                 $chances = array_slice($chances, 0, count($urls));
                 $chances = array_pad($chances, count($urls), 0.0);
-
+        
                 $newSettings[$newKeyword] = [
                     "enabled" => true, // New lists are enabled by default
                     "urls" => $urls,
                     "chances" => $chances,
                 ];
-
+        
                 // Create shortlink for the new keyword
                 $this->ensureShortlinkExists(
                     $newKeyword,
