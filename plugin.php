@@ -591,19 +591,18 @@ JS;
             return;
         }
 
-        // Verify nonce. The 4th argument ($return) makes the call return
-        // false instead of dying internally, so the `or yourls_die()` branch
-        // actually runs on failure. The 3rd argument ($user) stays at the
-        // YOURLS default by passing the empty string.
-        $nonceValid = yourls_verify_nonce(
+        // Verify nonce. The 4th argument is the message YOURLS will die()
+        // with on failure (a truthy $return triggers `die($return)` inside
+        // yourls_verify_nonce in YOURLS 1.10), so passing our own message
+        // here removes the need for a separate yourls_die() branch — the
+        // previous shape was unreachable. The 3rd argument stays at the
+        // sentinel `false` so YOURLS picks the logged-in user automatically.
+        yourls_verify_nonce(
             "random_redirect_settings_nonce",
             (string) ($_POST["nonce"] ?? ""),
-            "",
-            true
+            false,
+            "Invalid security token"
         );
-        if (!$nonceValid) {
-            yourls_die("Invalid security token", "Error", 403);
-        }
 
         $currentSettings = $this->settings; // Use cached settings
         $newSettings = [];
