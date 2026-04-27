@@ -1,0 +1,201 @@
+name: Release tests
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'tests/**'
+      - '.github/workflows/release-test.yml'
+
+permissions:
+  contents: write   # gh release upload needs write on releases
+
+jobs:
+  e2e:
+    name: Playwright E2E (${{ matrix.sleeky && 'with' || 'without' }} Sleeky)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        sleeky: [false, true]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Determine plugin version
+        id: version
+        run: |
+          VERSION=$(grep -oP 'Version:\s*\K[0-9.]+' plugin.php)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Plugin version: $VERSION"
+
+      - name: Build production + debug zips
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf dist staging-prod staging-debug
+          mkdir -p dist staging-prod/Random-Redirect-Manager staging-debug/Random-Redirect-Manager
+
+          # ------- Production zip — install-ready for end users -------
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='tests/' \
+            --exclude='node_modules/' \
+            --exclude='dist/' \
+            --exclude='staging-prod/' \
+            --exclude='staging-debug/' \
+            --exclude='test-plugin/' \
+            ./ staging-prod/Random-Redirect-Manager/
+          (cd staging-prod && zip -rq "$GITHUB_WORKSPACE/dist/YOURLS-Random-Redirect-Manager-v${VERSION}.zip" Random-Redirect-Manager)
+
+          # ------- Debug zip — entire repo, used by these tests -------
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            --exclude='dist/' \
+            --exclude='staging-prod/' \
+            --exclude='staging-debug/' \
+            --exclude='test-plugin/' \
+            ./ staging-debug/Random-Redirect-Manager/
+          (cd staging-debug && zip -rq "$GITHUB_WORKSPACE/dist/YOURLS-Random-Redirect-Manager-v${VERSION}-debug.zip" Random-Redirect-Manager)
+
+          ls -la dist/
+
+      - name: Extract debug zip as the plugin source
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf test-plugin
+          mkdir -p test-plugin
+          unzip -q "dist/YOURLS-Random-Redirect-Manager-v${VERSION}-debug.zip" -d test-plugin
+          echo "--- test-plugin tree (first 2 levels) ---"
+          find test-plugin -maxdepth 2 -mindepth 1 | sort
+
+      - name: Install Playwright deps
+        working-directory: tests
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Start YOURLS stack
+        working-directory: tests
+        env:
+          PLUGIN_PATH: ${{ github.workspace }}/test-plugin/Random-Redirect-Manager
+        run: docker compose up -d
+
+      - name: Install Sleeky-backend in YOURLS container
+        if: matrix.sleeky
+        working-directory: tests
+        run: |
+          docker compose exec -T yourls bash -c '
+            set -e
+            curl -fsSL https://github.com/Flynntes/Sleeky/archive/refs/heads/master.tar.gz -o /tmp/sleeky.tgz
+            tar -xzf /tmp/sleeky.tgz -C /tmp
+            cp -a /tmp/Sleeky-master/sleeky-backend /var/www/html/user/plugins/sleeky-backend
+            chown -R www-data:www-data /var/www/html/user/plugins/sleeky-backend
+            rm -rf /tmp/sleeky.tgz /tmp/Sleeky-master
+            ls -la /var/www/html/user/plugins/sleeky-backend/plugin.php
+          '
+
+      - name: Diagnose Docker stack
+        working-directory: tests
+        run: |
+          docker ps
+          echo "---"
+          docker compose ps
+          echo "--- /var/www/html/user/plugins ---"
+          docker compose exec -T yourls ls -la /var/www/html/user/plugins | head -30 || true
+          echo "--- one-shot curl probe (root) ---"
+          curl -sS -v -m 5 http://127.0.0.1:8080/ 2>&1 | head -30 || true
+
+      - name: Wait for YOURLS to respond
+        # `bash -e` would otherwise abort the loop on the first curl failure
+        # (e.g. connection-reset while Apache is still binding the port).
+        # Accept 200/302 (post-install) and 503 (pre-install — YOURLS sends
+        # this from the installer page when the DB tables don't exist yet).
+        shell: bash
+        run: |
+          set +e
+          for i in $(seq 1 90); do
+            code=$(curl -s -4 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/admin/install.php)
+            case "${code:-000}" in
+              200|302|503)
+                echo "YOURLS responded with HTTP $code after $i attempts"
+                exit 0
+                ;;
+            esac
+            echo "Attempt $i: HTTP ${code:-000}, waiting..."
+            sleep 2
+          done
+          echo "::error::YOURLS did not become ready in time"
+          docker compose -f tests/docker-compose.yml logs
+          exit 1
+
+      - name: Run Playwright tests
+        working-directory: tests
+        env:
+          SLEEKY_ENABLED: ${{ matrix.sleeky }}
+        run: npx playwright test
+
+      - name: Upload built zips
+        if: ${{ always() && !matrix.sleeky }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-zips
+          path: dist/*.zip
+          retention-days: 14
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-sleeky-${{ matrix.sleeky }}
+          path: tests/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright trace + screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-test-results-sleeky-${{ matrix.sleeky }}
+          path: tests/test-results/
+          retention-days: 14
+
+      - name: Dump YOURLS / DB logs on failure
+        if: failure()
+        working-directory: tests
+        run: docker compose logs --no-color
+
+      - name: Tear down stack
+        if: always()
+        working-directory: tests
+        run: docker compose down -v
+
+      - name: Attach zips to GitHub release
+        # Only the no-Sleeky run uploads — both runs build the same zips, so
+        # double-upload would just race on the API.
+        if: ${{ github.event_name == 'release' && success() && !matrix.sleeky }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release upload "v${VERSION}" \
+            "dist/YOURLS-Random-Redirect-Manager-v${VERSION}.zip" \
+            "dist/YOURLS-Random-Redirect-Manager-v${VERSION}-debug.zip" \
+            --repo "${{ github.repository }}" \
+            --clobber

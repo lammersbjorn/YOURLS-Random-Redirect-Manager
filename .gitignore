@@ -1,0 +1,24 @@
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# Test artifacts (Playwright)
+tests/node_modules/
+tests/playwright-report/
+tests/test-results/
+tests/.auth/
+tests/package-lock.json
+
+# Workflow build artifacts
+dist/
+staging-prod/
+staging-debug/
+test-plugin/
+
+# YOURLS-test-suite-for-plugins (cloned by install-test-suite.sh)
+test-suite/
+YOURLS/

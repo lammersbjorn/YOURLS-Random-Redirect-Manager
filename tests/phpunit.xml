@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    colors="true"
+    bootstrap="../test-suite/src/bootstrap.php"
+    failOnWarning="true"
+    failOnRisky="true">
+    <testsuites>
+        <!-- Modern PSR-4 naming: ClassNameTest.php contains class ClassNameTest. -->
+        <testsuite name="Random Redirect Manager">
+            <directory suffix="Test.php">./</directory>
+            <exclude>./e2e</exclude>
+            <exclude>./utils</exclude>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory suffix=".php">../</directory>
+        </include>
+        <exclude>
+            <directory suffix=".php">../tests</directory>
+            <directory suffix=".php">../test-suite</directory>
+            <directory suffix=".php">../YOURLS</directory>
+        </exclude>
+    </source>
+    <php>
+        <!-- Wiring needed by the YOURLS test bootstrap itself -->
+        <const name="PHPUNIT_TESTSUITE" value="true"/>
+        <request name="username" value="yourls"/>
+        <request name="password" value="secret-ci-test"/>
+        <server name="SERVER_SOFTWARE" value="GITHUB_ACTIONS"/>
+        <server name="HTTP_USER_AGENT" value="GitHub Actions PHPUnit"/>
+        <server name="HTTP_HOST" value="ci.example.com"/>
+        <server name="HTTP_CLIENT_IP" value="10.10.10.1"/>
+        <request name="format" value="simple"/>
+    </php>
+</phpunit>

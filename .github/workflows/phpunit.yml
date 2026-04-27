@@ -1,0 +1,85 @@
+name: PHPUnit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'tests/**Test.php'
+      - 'tests/phpunit.xml'
+      - '.github/workflows/phpunit.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'tests/**Test.php'
+      - 'tests/phpunit.xml'
+      - '.github/workflows/phpunit.yml'
+  workflow_dispatch:
+
+jobs:
+  phpunit:
+    name: PHPUnit (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # PHPUnit 11 requires PHP ≥ 8.2 — pin 10 for the 8.1 floor.
+          - php: '8.1'
+            phpunit: '10'
+          - php: '8.4'
+            phpunit: '11'
+
+    services:
+      mariadb:
+        image: mariadb:11
+        ports:
+          - 3306:3306
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 'true'
+        options: >-
+          --health-cmd="mariadb-admin ping -h localhost -u root --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, curl, zip, dom, simplexml, intl, pdo_mysql, mysqli
+          tools: phpunit:${{ matrix.phpunit }}
+
+      - name: Wait for MariaDB
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 --protocol=tcp --silent 2>/dev/null; then
+              echo "MariaDB is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::MariaDB never became reachable"
+          exit 1
+
+      - name: Install YOURLS test suite + bootstrap
+        run: |
+          git clone --depth 1 https://github.com/YOURLS/YOURLS-test-suite-for-plugins test-suite
+          bash test-suite/src/install-test-suite.sh yourls_tests root '' 127.0.0.1 1.10.2
+
+      - name: Run PHPUnit
+        run: phpunit -c tests/phpunit.xml
+
+      - name: Upload PHPUnit log on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phpunit-log-php-${{ matrix.php }}
+          path: |
+            test-suite/YOURLS/user/debug.log
+          if-no-files-found: ignore
+          retention-days: 14

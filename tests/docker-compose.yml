@@ -1,0 +1,43 @@
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: yourls
+      MARIADB_USER: yourls
+      MARIADB_PASSWORD: yourlspass
+      MARIADB_ROOT_PASSWORD: rootpass
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -prootpass --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  yourls:
+    # Build a YOURLS-on-PHP-8.4 image locally — the upstream `yourls:*` images
+    # are now bundling PHP 8.5 which causes the request handler to reset
+    # connections immediately after Apache start. Building from php:8.4-apache
+    # gives us a stable, deterministic environment.
+    build:
+      context: ./yourls-image
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      YOURLS_DB_HOST: db
+      YOURLS_DB_USER: yourls
+      YOURLS_DB_PASS: yourlspass
+      YOURLS_DB_NAME: yourls
+      YOURLS_SITE: http://127.0.0.1:8080
+      YOURLS_USER: admin
+      YOURLS_PASS: admin
+      YOURLS_PRIVATE: "false"
+    volumes:
+      # ${PLUGIN_PATH} is set by the workflow to the *extracted debug zip*
+      # so the tests run against exactly what is shipped. For local dev it
+      # falls back to the repo root, which contains the same plugin files.
+      - "${PLUGIN_PATH:-..}:/var/www/html/user/plugins/Random-Redirect-Manager"
