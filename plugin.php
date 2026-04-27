@@ -8,6 +8,10 @@
  * Author URI: https://github.com/lammersbjorn
  * License: BSD 3-Clause
  * License URI: https://opensource.org/licenses/BSD-3-Clause
+ * Requires at least: YOURLS 1.7.3
+ * Tested up to: YOURLS 1.10.2
+ * Requires PHP: 7.4
+ * Tested up to PHP: 8.5
  */
 
 // Prevent direct access to this file
@@ -63,8 +67,12 @@ class RandomRedirectManager
             return;
         }
 
-        // Get the requested keyword (path part of the URL)
-        $request = trim(parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH), "/");
+        // Get the requested keyword (path part of the URL).
+        // PHP 8.1+ deprecates passing null to string functions, so coalesce
+        // any null/false from parse_url() (malformed REQUEST_URI) to "".
+        $requestUri = isset($_SERVER["REQUEST_URI"]) ? (string) $_SERVER["REQUEST_URI"] : "";
+        $path = parse_url($requestUri, PHP_URL_PATH);
+        $request = trim(is_string($path) ? $path : "", "/");
         // Decode URL-encoded characters (e.g., %20 -> space)
         $request = urldecode($request);
 
@@ -170,11 +178,14 @@ class RandomRedirectManager
         // Output CSS and JS first
         $this->displayAdminAssets();
 
-        // Output HTML using HEREDOC for better readability
+        // Output HTML using HEREDOC for better readability. The whole page
+        // is wrapped in `.rrm-page` so the plugin styles don't bleed into
+        // the surrounding YOURLS / Sleeky admin chrome.
         echo <<<HTML
+    <div class="rrm-page">
     <h2>Random Redirect Manager</h2>
 
-    <div class="notice notice-info">
+    <div class="rrm-info-box">
       <p><strong>Note:</strong> When you add or update a redirect list, the plugin automatically creates/updates the corresponding YOURLS shortlink. The first URL in the list is used as the target for the shortlink.</p>
       <p><strong>Chance Percentages:</strong> Define the probability for each URL. The system normalizes positive percentages if they don't sum to 100%. URLs with 0% or no percentage set won't be chosen unless all percentages are zero (then it's equal distribution).</p>
     </div>
@@ -210,6 +221,7 @@ HTML;
 
       <p><input type="submit" value="Save All Settings" class="button button-primary"></p>
     </form>
+    </div> <!-- .rrm-page -->
 HTML;
     }
 
@@ -392,43 +404,49 @@ HTML;
      */
     private function displayAdminAssets(): void
     {
-        // CSS - Using HEREDOC for multiline string
+        // CSS - Using HEREDOC for multiline string. Every selector is scoped
+        // to .rrm-page so the plugin styles don't bleed into the surrounding
+        // admin chrome. Colors use rgba()/inherit so the form looks right on
+        // both vanilla YOURLS and the Sleeky admin theme (light + dark).
         $css = <<<'CSS'
-      .notice { margin: 15px 0; padding: 10px 15px; border-radius: 5px; }
-      .notice-info { background-color: rgba(0, 128, 255, 0.1); border-left: 4px solid #0080ff; }
-      .settings-group, .redirect-list-settings { margin: 20px 0; padding: 15px; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; }
-      .redirect-lists-container { margin: 20px 0; display: flex; flex-direction: column; gap: 15px; }
-      .redirect-list-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); background-color: rgba(128, 128, 128, 0.05); }
-      .redirect-list-header h4 { margin: 0; }
-      .list-actions { display: flex; align-items: center; gap: 10px; }
-      .redirect-list-content { padding: 15px; }
-      .redirect-list-row { display: flex; gap: 15px; margin-bottom: 15px; }
-      .redirect-list-row:last-child { margin-bottom: 0; }
-      .redirect-list-col { flex: 1; }
-      .redirect-list-col.full { flex: 0 0 100%; }
-      .redirect-list-col label { display: block; margin-bottom: 5px; font-weight: bold; }
-      input.text, textarea.text { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 3px; background: transparent; color: inherit; box-sizing: border-box; }
-      input:required:invalid { border-color: #f44336; }
-      .redirect-list-toggle { display: flex; align-items: center; gap: 5px; font-weight: normal; }
-      .button.delete-list-button { background-color: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
-      .button.delete-list-button:hover { background-color: #c82333; }
-      .url-chances-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-      .url-chance-row { display: flex; align-items: center; gap: 10px; width: 100%; }
-      .url-input { flex: 3; min-width: 250px; }
-      .chance-input { flex: 0 0 80px; width: 80px; text-align: right; }
-      .percent-sign { flex: 0 0 10px; margin-right: 5px; }
-      .remove-url { flex: 0 0 25px; background-color: #f44336; color: white; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
-      .remove-url:hover { background-color: #e53935; }
-      .url-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
-      .total-percentage { color: #666; font-weight: bold; }
-      .percentage-sum { color: #008000; }
-      .percentage-sum.error { color: #f44336; font-weight: bold; }
-      .add-url { cursor: pointer; }
+      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: rgba(0, 128, 255, 0.1); border-left: 4px solid #0080ff; color: inherit; }
+      .rrm-page .rrm-info-box p { margin: 4px 0; }
+      .rrm-page .settings-group, .rrm-page .redirect-list-settings { margin: 20px 0; padding: 0; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; background: transparent; }
+      .rrm-page .settings-group { padding: 15px; }
+      .rrm-page .redirect-lists-container { margin: 20px 0; display: flex; flex-direction: column; gap: 15px; }
+      .rrm-page .redirect-list-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); background-color: rgba(128, 128, 128, 0.05); }
+      .rrm-page .redirect-list-header h4 { margin: 0; font-size: 1em; }
+      .rrm-page .keyword-display { font-family: monospace; }
+      .rrm-page .list-actions { display: flex; align-items: center; gap: 10px; }
+      .rrm-page .redirect-list-content { padding: 15px; }
+      .rrm-page .redirect-list-row { display: flex; gap: 15px; margin-bottom: 15px; }
+      .rrm-page .redirect-list-row:last-child { margin-bottom: 0; }
+      .rrm-page .redirect-list-col { flex: 1; }
+      .rrm-page .redirect-list-col.full { flex: 0 0 100%; }
+      .rrm-page .redirect-list-col label { display: block; margin-bottom: 5px; font-weight: bold; }
+      .rrm-page input.text, .rrm-page textarea.text { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 3px; background: transparent; color: inherit; box-sizing: border-box; }
+      .rrm-page input.text:focus, .rrm-page textarea.text:focus { outline: 2px solid rgba(0, 128, 255, 0.4); outline-offset: 1px; }
+      .rrm-page input:required:invalid { border-color: #f44336; }
+      .rrm-page .redirect-list-toggle { display: flex; align-items: center; gap: 5px; font-weight: normal; }
+      .rrm-page .button.delete-list-button { background-color: #dc3545; color: #fff; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+      .rrm-page .button.delete-list-button:hover { background-color: #c82333; }
+      .rrm-page .url-chances-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+      .rrm-page .url-chance-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+      .rrm-page .url-input { flex: 3; min-width: 250px; }
+      .rrm-page .chance-input { flex: 0 0 80px; width: 80px; text-align: right; }
+      .rrm-page .percent-sign { flex: 0 0 10px; margin-right: 5px; opacity: 0.7; }
+      .rrm-page .remove-url { flex: 0 0 25px; background-color: #f44336; color: #fff; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
+      .rrm-page .remove-url:hover { background-color: #e53935; }
+      .rrm-page .url-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+      .rrm-page .total-percentage { font-weight: bold; opacity: 0.8; }
+      .rrm-page .percentage-sum { color: #008000; }
+      .rrm-page .percentage-sum.error { color: #f44336; font-weight: bold; }
+      .rrm-page .add-url { cursor: pointer; }
       @media (max-width: 768px) {
-        .redirect-list-row { flex-direction: column; gap: 10px; }
-        .url-chance-row { flex-wrap: wrap; }
-        .url-input { min-width: 200px; }
-        .list-actions { flex-direction: column; align-items: flex-start; gap: 5px; }
+        .rrm-page .redirect-list-row { flex-direction: column; gap: 10px; }
+        .rrm-page .url-chance-row { flex-wrap: wrap; }
+        .rrm-page .url-input { min-width: 200px; }
+        .rrm-page .list-actions { flex-direction: column; align-items: flex-start; gap: 5px; }
       }
 CSS;
 
@@ -573,12 +591,19 @@ JS;
             return;
         }
 
-        // Verify nonce
-        yourls_verify_nonce(
+        // Verify nonce. The 4th argument ($return) makes the call return
+        // false instead of dying internally, so the `or yourls_die()` branch
+        // actually runs on failure. The 3rd argument ($user) stays at the
+        // YOURLS default by passing the empty string.
+        $nonceValid = yourls_verify_nonce(
             "random_redirect_settings_nonce",
-            $_POST["nonce"] ?? "",
-            false // Do not die, just return false
-        ) or yourls_die("Invalid security token", "Error", 403);
+            (string) ($_POST["nonce"] ?? ""),
+            "",
+            true
+        );
+        if (!$nonceValid) {
+            yourls_die("Invalid security token", "Error", 403);
+        }
 
         $currentSettings = $this->settings; // Use cached settings
         $newSettings = [];
@@ -764,11 +789,14 @@ JS;
             return "";
         }
         $keyword = trim($keyword);
-        // Allow letters, numbers, hyphen, underscore, forward slash
-        // Remove leading/trailing slashes and collapse multiple slashes
+        // Allow letters, numbers, hyphen, underscore, forward slash.
+        // Remove leading/trailing slashes and collapse multiple slashes.
         $keyword = trim($keyword, "/");
-        $keyword = preg_replace("#/+#", "/", $keyword);
-        if (preg_match('/^[a-zA-Z0-9-_\/]+$/', $keyword)) {
+        // preg_replace can return null on regex error — coalesce so PHP 8.1+
+        // doesn't emit a deprecation when the result reaches preg_match.
+        $collapsed = preg_replace("#/+#", "/", $keyword);
+        $keyword = is_string($collapsed) ? $collapsed : $keyword;
+        if (preg_match('/^[a-zA-Z0-9\-_\/]+$/', $keyword)) {
             return $keyword;
         }
         return ""; // Invalid characters
