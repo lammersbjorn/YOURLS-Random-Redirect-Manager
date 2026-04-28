@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: Version bump to release
+        required: true
+        type: choice
+        options:
+          - minor
+          - major
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PLUGIN_DIR: Random-Redirect-Manager
+  ZIP_NAME: YOURLS-Random-Redirect-Manager.zip
+
+jobs:
+  stable:
+    name: Stable release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump plugin version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(grep -E '^[[:space:]]*\*[[:space:]]*Version:' plugin.php | sed -E 's/.*Version:[[:space:]]*//')"
+          IFS='.' read -r major minor patch <<< "$current"
+          major="${major:-0}"
+          minor="${minor:-0}"
+          patch="${patch:-0}"
+
+          case "${{ inputs.release_type }}" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="${major}.$((minor + 1)).0" ;;
+            *) echo "Unsupported release type" >&2; exit 1 ;;
+          esac
+
+          perl -0pi -e "s/(\\* Version:\\s*)\\Q$current\\E/\${1}$next/" plugin.php
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag
+        run: |
+          set -euo pipefail
+          git add plugin.php
+          git commit -m "chore: release v${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Build install zip
+        run: |
+          set -euo pipefail
+          rm -rf dist staging
+          mkdir -p "dist" "staging/${PLUGIN_DIR}"
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.gitignore' \
+            --exclude='.github/' \
+            --exclude='dev/' \
+            --exclude='scripts/' \
+            --exclude='tests/' \
+            --exclude='test-suite/' \
+            --exclude='dist/' \
+            --exclude='staging/' \
+            ./ "staging/${PLUGIN_DIR}/"
+          (cd staging && zip -rq "$GITHUB_WORKSPACE/dist/${ZIP_NAME}" "${PLUGIN_DIR}")
+          unzip -l "dist/${ZIP_NAME}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "dist/${ZIP_NAME}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes "Stable release ${{ steps.version.outputs.tag }}."
+
+  alpha:
+    name: Alpha release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build install zip
+        run: |
+          set -euo pipefail
+          rm -rf dist staging
+          mkdir -p "dist" "staging/${PLUGIN_DIR}"
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.gitignore' \
+            --exclude='.github/' \
+            --exclude='dev/' \
+            --exclude='scripts/' \
+            --exclude='tests/' \
+            --exclude='test-suite/' \
+            --exclude='dist/' \
+            --exclude='staging/' \
+            ./ "staging/${PLUGIN_DIR}/"
+          (cd staging && zip -rq "$GITHUB_WORKSPACE/dist/${ZIP_NAME}" "${PLUGIN_DIR}")
+          unzip -l "dist/${ZIP_NAME}"
+
+      - name: Create alpha release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          tag="alpha-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${short_sha}"
+          gh release create "$tag" \
+            "dist/${ZIP_NAME}" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Alpha ${short_sha}" \
+            --notes "Automatic alpha release for ${GITHUB_SHA}."
