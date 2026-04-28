@@ -1,0 +1,100 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'tests/**'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.php'
+      - 'tests/**'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.1'
+            phpunit: '10'
+          - php: '8.4'
+            phpunit: '11'
+
+    services:
+      mariadb:
+        image: mariadb:11
+        ports:
+          - 3306:3306
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: 'true'
+        options: >-
+          --health-cmd="mariadb-admin ping -h localhost -u root --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, curl, zip, dom, simplexml, intl, pdo_mysql, mysqli
+          tools: phpunit:${{ matrix.phpunit }}
+
+      - name: Lint PHP
+        run: find . -path './test-suite' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Install YOURLS test suite
+        run: |
+          git clone --depth 1 https://github.com/YOURLS/YOURLS-test-suite-for-plugins test-suite
+          bash test-suite/src/install-test-suite.sh yourls_tests root '' 127.0.0.1 1.10.3
+
+      - name: Run PHPUnit
+        run: phpunit -c tests/phpunit.xml
+
+  package:
+    name: Package smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v6
+
+      - name: Build install zip
+        run: |
+          set -euo pipefail
+          rm -rf dist staging
+          mkdir -p dist staging/Random-Redirect-Manager
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.gitignore' \
+            --exclude='.github/' \
+            --exclude='tests/' \
+            --exclude='test-suite/' \
+            --exclude='dist/' \
+            --exclude='staging/' \
+            ./ staging/Random-Redirect-Manager/
+          (cd staging && zip -rq "$GITHUB_WORKSPACE/dist/YOURLS-Random-Redirect-Manager.zip" Random-Redirect-Manager)
+
+      - name: Verify install zip contents
+        run: |
+          set -euo pipefail
+          unzip -l dist/YOURLS-Random-Redirect-Manager.zip
+          unzip -l dist/YOURLS-Random-Redirect-Manager.zip | grep -q 'Random-Redirect-Manager/plugin.php'
+          if unzip -l dist/YOURLS-Random-Redirect-Manager.zip | grep -Eq 'Random-Redirect-Manager/(\.github|tests|test-suite)/'; then
+            echo "::error::Install zip contains development files"
+            exit 1
+          fi
