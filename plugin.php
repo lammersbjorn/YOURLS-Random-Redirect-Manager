@@ -9,7 +9,7 @@
  * License: BSD 3-Clause
  * License URI: https://opensource.org/licenses/BSD-3-Clause
  * Requires at least: YOURLS 1.7.3
- * Tested up to: YOURLS 1.10.2
+ * Tested up to: YOURLS 1.10.3
  * Requires PHP: 7.4
  * Tested up to PHP: 8.5
  */
@@ -257,7 +257,10 @@ HTML;
         $shortlinks = $this->getAllShortlinks();
         $payload = json_encode(
             ["shortlinks" => $shortlinks],
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG
+            JSON_UNESCAPED_SLASHES |
+                JSON_UNESCAPED_UNICODE |
+                JSON_HEX_TAG |
+                JSON_INVALID_UTF8_SUBSTITUTE
         );
         echo "<script id=\"rrm-bootstrap\" type=\"application/json\">"
             . ($payload !== false ? $payload : '{"shortlinks":[]}')
@@ -304,7 +307,7 @@ HTML;
                   value="{$escapedKeyword}"
                   class="text keyword-input"
                   required
-                  pattern="^[a-zA-Z0-9-_\/]+$"
+                  pattern="^[a-zA-Z0-9_\/-]+$"
                   title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
               </div>
             </div>
@@ -371,7 +374,7 @@ HTML;
         <label for="new_list_keyword">New Keyword:</label>
         <input type="text" id="new_list_keyword" name="new_list_keyword" class="text keyword-input"
           placeholder="Enter keyword (e.g., random-link)"
-          pattern="^[a-zA-Z0-9-_\/]+$"
+          pattern="^[a-zA-Z0-9_\/-]+$"
           title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
       </div>
     </div>
@@ -891,18 +894,12 @@ JS;
             return;
         }
 
-        // Verify nonce. The 4th argument is the message YOURLS will die()
-        // with on failure (a truthy $return triggers `die($return)` inside
-        // yourls_verify_nonce in YOURLS 1.10), so passing our own message
-        // here removes the need for a separate yourls_die() branch — the
-        // previous shape was unreachable. The 3rd argument stays at the
-        // sentinel `false` so YOURLS picks the logged-in user automatically.
-        yourls_verify_nonce(
-            "random_redirect_settings_nonce",
-            (string) ($_POST["nonce"] ?? ""),
-            false,
-            "Invalid security token"
-        );
+        // Verify nonce. Keep YOURLS' default yourls_die(..., 403) failure
+        // path, and only pass a string nonce so malformed nonce[]= payloads
+        // do not emit array-to-string warnings on PHP 8.4+.
+        $nonceInput = $_POST["nonce"] ?? "";
+        $nonce = is_string($nonceInput) ? $nonceInput : "";
+        yourls_verify_nonce("random_redirect_settings_nonce", $nonce);
 
         $currentSettings = $this->settings; // Use cached settings
         $newSettings = [];
@@ -1300,6 +1297,20 @@ JS;
 
         $path = parse_url($url, PHP_URL_PATH);
         $keyword = trim(is_string($path) ? $path : "", "/");
+
+        // YOURLS can live in subdirectory (eg /links). Strip that
+        // install path from incoming short URL before keyword lookup.
+        $sitePath = trim((string) parse_url(YOURLS_SITE, PHP_URL_PATH), "/");
+        if ($sitePath !== "") {
+            if ($keyword === $sitePath) {
+                return $url;
+            }
+            $sitePrefix = $sitePath . "/";
+            if (strpos($keyword, $sitePrefix) === 0) {
+                $keyword = substr($keyword, strlen($sitePrefix));
+            }
+        }
+
         if ($keyword === "") {
             return $url;
         }
