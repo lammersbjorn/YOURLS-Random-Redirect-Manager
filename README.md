@@ -52,6 +52,31 @@ php -l includes/bootstrap.php
 php -l includes/class-random-redirect-manager.php
 ```
 
+## Local YOURLS Dev
+
+Start a disposable YOURLS instance with this plugin mounted read-only:
+
+```bash
+./scripts/dev-yourls up
+```
+
+Defaults:
+
+- URL: `http://localhost:8088/admin/`
+- Login: `admin` / `adminpass`
+- YOURLS image: `yourls:latest`
+- Database: private Docker Compose MariaDB volume
+
+The script installs YOURLS if needed, activates this plugin, seeds a few GitHub shortlinks, and creates a sample weighted redirect list at `http://localhost:8088/randomrepos`.
+
+Useful commands:
+
+```bash
+./scripts/dev-yourls logs
+./scripts/dev-yourls down
+./scripts/dev-yourls reset
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

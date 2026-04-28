@@ -1,0 +1,39 @@
+services:
+  db:
+    image: ${YOURLS_DB_IMAGE:-mariadb:11}
+    environment:
+      MARIADB_DATABASE: ${YOURLS_DB_NAME:-yourls}
+      MARIADB_USER: ${YOURLS_DB_USER:-yourls}
+      MARIADB_PASSWORD: ${YOURLS_DB_PASS:-yourls}
+      MARIADB_ROOT_PASSWORD: ${YOURLS_DB_ROOT_PASS:-yourls-root}
+    volumes:
+      - db-data:/var/lib/mysql
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p${YOURLS_DB_ROOT_PASS:-yourls-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  yourls:
+    image: ${YOURLS_IMAGE:-yourls:latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+    environment:
+      YOURLS_DB_HOST: db
+      YOURLS_DB_USER: ${YOURLS_DB_USER:-yourls}
+      YOURLS_DB_PASS: ${YOURLS_DB_PASS:-yourls}
+      YOURLS_DB_NAME: ${YOURLS_DB_NAME:-yourls}
+      YOURLS_SITE: ${YOURLS_SITE:-http://localhost:8088}
+      YOURLS_USER: ${YOURLS_USER:-admin}
+      YOURLS_PASS: ${YOURLS_PASS:-adminpass}
+    ports:
+      - "${YOURLS_PORT:-8088}:8080"
+    volumes:
+      - ../:/var/www/html/user/plugins/Random-Redirect-Manager:ro
+
+volumes:
+  db-data:
