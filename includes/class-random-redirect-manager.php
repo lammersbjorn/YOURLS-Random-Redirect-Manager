@@ -1,0 +1,939 @@
+<?php
+
+declare(strict_types=1);
+
+if (!defined('YOURLS_ABSPATH')) {
+    die();
+}
+
+class RandomRedirectManager
+{
+    private const OPTION_NAME = "random_redirect_settings";
+    private array $settings = []; // Cache settings locally
+
+    public function __construct()
+    {
+        // Load settings once
+        $this->loadSettings();
+
+        // Admin page hooks
+        yourls_add_action("plugins_loaded", [$this, "addAdminPage"]);
+
+        // Process form submissions on the plugin page itself. The
+        // `load-<plugin_page>` action fires from yourls_plugin_admin_page()
+        // *after* yourls_maybe_require_auth() has defined YOURLS_USER, so
+        // yourls_verify_nonce() sees the same user as yourls_create_nonce()
+        // did when the form was rendered. The earlier `admin_init` hook
+        // ran from Init::__construct() *before* auth, leaving YOURLS_USER
+        // undefined - that mismatch is what produced the
+        // "Unauthorized action or expired link" failure on save.
+        yourls_add_action("load-random_redirect_settings", [
+            $this,
+            "processFormSubmission",
+        ]);
+
+        // Check requests for redirects
+        yourls_add_action("shutdown", [$this, "checkRequest"]);
+    }
+
+    /**
+     * Load settings from YOURLS options.
+     */
+    private function loadSettings(): void
+    {
+        $settings = yourls_get_option(self::OPTION_NAME);
+        $this->settings = is_array($settings) ? $settings : [];
+    }
+
+    /**
+     * Check if the current request matches a configured keyword and perform redirect.
+     */
+    public function checkRequest(): void
+    {
+        // No need to reload settings if already loaded unless they might change mid-request
+        // $this->loadSettings(); // Uncomment if settings could change between constructor and shutdown
+
+        if (empty($this->settings)) {
+            return;
+        }
+
+        // Get the requested keyword (path part of the URL).
+        // PHP 8.1+ deprecates passing null to string functions, so coalesce
+        // any null/false from parse_url() (malformed REQUEST_URI) to "".
+        $requestUri = isset($_SERVER["REQUEST_URI"]) ? (string) $_SERVER["REQUEST_URI"] : "";
+        $path = parse_url($requestUri, PHP_URL_PATH);
+        $request = trim(is_string($path) ? $path : "", "/");
+        // Decode URL-encoded characters (e.g., %20 -> space)
+        $request = urldecode($request);
+
+        if (
+            isset($this->settings[$request]) &&
+            !empty($this->settings[$request]["urls"]) &&
+            ($this->settings[$request]["enabled"] ?? false) // Default to false if not set
+        ) {
+            $listData = $this->settings[$request];
+            $urls = $listData["urls"];
+            $chances = $listData["chances"] ?? [];
+
+            // Select URL based on chances
+            $randomUrl = !empty($chances)
+                ? $this->getWeightedRandomUrl($urls, $chances)
+                : $urls[array_rand($urls)]; // Fallback to equal distribution
+
+            // Perform the redirect
+            // Use 307 Temporary Redirect to better indicate the resource itself hasn't moved
+            yourls_redirect($randomUrl, 307);
+            exit();
+        }
+    }
+
+    /**
+     * Get a weighted random URL based on chance percentages.
+     *
+     * @param array<int, string> $urls List of URLs.
+     * @param array<int, float> $chances List of percentage chances corresponding to URLs.
+     * @return string The selected URL.
+     */
+    private function getWeightedRandomUrl(array $urls, array $chances): string
+    {
+        // Ensure chances array matches urls array size, padding with 0 if needed
+        $numUrls = count($urls);
+        $chances = array_slice($chances, 0, $numUrls);
+        $chances = array_pad($chances, $numUrls, 0.0);
+
+        $validChances = array_filter($chances, fn($c) => $c > 0);
+
+        // If no valid positive chances, return a random URL with equal probability
+        if (empty($validChances)) {
+            return $urls[array_rand($urls)];
+        }
+
+        $totalPercentage = array_sum($validChances);
+
+        // If total is zero (e.g., all chances were 0 or negative), distribute equally
+        if ($totalPercentage <= 0) {
+            return $urls[array_rand($urls)];
+        }
+
+        $cumulative = 0.0;
+        $distribution = [];
+        foreach ($urls as $index => $url) {
+            $chance = $chances[$index] ?? 0.0;
+            if ($chance > 0) {
+                // Normalize percentage based on the sum of positive chances
+                $normalizedPercentage = ($chance / $totalPercentage) * 100.0;
+                $cumulative += $normalizedPercentage;
+                $distribution[$index] = $cumulative;
+            }
+        }
+
+        // Get a random number between 0 and 100
+        $random = mt_rand(0, 10000) / 100.0;
+
+        // Find which URL the random number corresponds to
+        foreach ($distribution as $index => $threshold) {
+            if ($random <= $threshold) {
+                return $urls[$index];
+            }
+        }
+
+        // Fallback (should only happen with floating point inaccuracies or empty distribution)
+        return $urls[array_key_last($urls)];
+    }
+
+    /**
+     * Add admin page link to the YOURLS menu.
+     */
+    public function addAdminPage(): void
+    {
+        yourls_register_plugin_page(
+            "random_redirect_settings", // Page slug
+            "Random Redirect Manager", // Page title
+            [$this, "displayAdminPage"] // Display function
+        );
+    }
+
+    /**
+     * Display the admin settings page HTML.
+     */
+    public function displayAdminPage(): void
+    {
+        if (!yourls_is_admin()) {
+            yourls_die("Access denied", "Permission Denied", 403);
+        }
+
+        $nonce = yourls_create_nonce("random_redirect_settings_nonce");
+        // Settings are already loaded in $this->settings
+
+        // Output CSS and JS first
+        $this->displayAdminAssets();
+
+        // Output HTML using HEREDOC for better readability. The whole page
+        // is wrapped in `.rrm-page` so the plugin styles don't bleed into
+        // the surrounding YOURLS / Sleeky admin chrome.
+        echo <<<HTML
+    <div class="rrm-page">
+    <h2>Random Redirect Manager</h2>
+
+    <div class="rrm-info-box">
+      <p><strong>Note:</strong> When you add or update a redirect list, the plugin automatically creates/updates the corresponding YOURLS shortlink. The first URL in the list is used as the target for the shortlink.</p>
+      <p><strong>Chance Percentages:</strong> Define the probability for each URL. The system normalizes positive percentages if they don't sum to 100%. URLs with 0% or no percentage set won't be chosen unless all percentages are zero (then it's equal distribution).</p>
+    </div>
+
+    <form method="post" id="random-redirect-form">
+      <input type="hidden" name="nonce" value="{$nonce}">
+      <input type="hidden" name="action" value="update_random_redirect_settings">
+
+      <div class="redirect-lists-container">
+HTML;
+
+        // Display existing lists
+        if (!empty($this->settings)) {
+            foreach ($this->settings as $keyword => $listData) {
+                $this->displayExistingListForm($keyword, $listData);
+            }
+        } else {
+            echo "<p>No redirect lists configured yet.</p>";
+        }
+
+        echo <<<HTML
+      </div> <!-- .redirect-lists-container -->
+
+      <h3>Add New Redirect List</h3>
+      <div class="settings-group add-new-list">
+HTML;
+
+        // Display form for adding a new list
+        $this->displayNewListForm();
+
+        echo <<<HTML
+      </div> <!-- .settings-group.add-new-list -->
+
+      <p><input type="submit" value="Save All Settings" class="button button-primary"></p>
+
+      <div class="rrm-danger-zone">
+        <h4>Danger zone</h4>
+        <p>Removes every redirect list configured here. The matching YOURLS shortlinks themselves are kept and will need to be deleted manually if you don't want them anymore.</p>
+        <button type="submit" name="reset_all" value="1" formnovalidate
+          class="button reset-all-button"
+          onclick="return confirm('Are you sure you want to remove ALL redirect lists? This cannot be undone.')">
+          Reset all redirect lists
+        </button>
+      </div>
+    </form>
+
+    <dialog id="rrm-picker" class="rrm-picker">
+      <h3>Pick a YOURLS shortlink</h3>
+      <input type="text" id="rrm-picker-q" placeholder="Search keyword, URL or title..." autocomplete="off">
+      <ul id="rrm-picker-list"></ul>
+      <div class="rrm-picker-actions">
+        <button type="button" id="rrm-picker-cancel" class="button button-secondary">Cancel</button>
+      </div>
+    </dialog>
+    </div> <!-- .rrm-page -->
+HTML;
+
+        // Bootstrap payload for the shortlink picker. The JS inside
+        // displayAdminAssets() reads this on load. JSON_HEX_TAG escapes
+        // `<` and `>` to `<` / `>` so a user-controlled shortlink
+        // URL or title cannot smuggle a `</script>` sequence and break out
+        // of the inline JSON block. JSON.parse handles the escapes natively.
+        $shortlinks = $this->getAllShortlinks();
+        $payload = json_encode(
+            ["shortlinks" => $shortlinks],
+            JSON_UNESCAPED_SLASHES |
+                JSON_UNESCAPED_UNICODE |
+                JSON_HEX_TAG |
+                JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        echo "<script id=\"rrm-bootstrap\" type=\"application/json\">"
+            . ($payload !== false ? $payload : '{"shortlinks":[]}')
+            . "</script>\n";
+    }
+
+    /**
+     * Display the form section for an existing redirect list.
+     *
+     * @param string $keyword The keyword for the list.
+     * @param array $listData The data for the list (enabled, urls, chances).
+     */
+    private function displayExistingListForm(
+        string $keyword,
+        array $listData
+    ): void {
+        $escapedKeyword = htmlspecialchars($keyword);
+        $isEnabled = $listData["enabled"] ?? true; // Default to enabled
+        $checked = $isEnabled ? "checked" : "";
+        $urls = $listData["urls"] ?? [];
+        $chances = $listData["chances"] ?? [];
+
+        echo <<<HTML
+        <div class="redirect-list-settings" data-keyword="{$escapedKeyword}">
+          <div class="redirect-list-header">
+            <h4>Keyword: <span class="keyword-display">{$escapedKeyword}</span></h4>
+            <div class="list-actions">
+              <label class="redirect-list-toggle">
+                <input type="checkbox" name="list_enabled[{$escapedKeyword}]" value="1" {$checked}>
+                Enable
+              </label>
+              <button type="submit" name="delete_list" value="{$escapedKeyword}" formnovalidate
+                class="button delete-list-button" onclick="return confirm('Are you sure you want to delete the list for keyword \'{$escapedKeyword}\'? This action is immediate and cannot be undone.')">
+                Delete List
+              </button>
+            </div>
+          </div>
+          <div class="redirect-list-content">
+            <div class="redirect-list-row">
+              <div class="redirect-list-col">
+                <label for="list_keyword_{$escapedKeyword}">Keyword (edit):</label>
+                <input type="text" id="list_keyword_{$escapedKeyword}"
+                  name="list_keyword[{$escapedKeyword}]"
+                  value="{$escapedKeyword}"
+                  class="text keyword-input"
+                  required
+                  pattern="^[a-zA-Z0-9_\/-]+$"
+                  title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
+              </div>
+            </div>
+            <div class="redirect-list-row">
+              <div class="redirect-list-col full">
+                <label>URLs and Chances (%):</label>
+                <div class="url-chances-container">
+HTML;
+
+        // Display URL/Chance rows
+        if (!empty($urls)) {
+            foreach ($urls as $index => $url) {
+                $escapedUrl = htmlspecialchars($url);
+                $chance = isset($chances[$index])
+                    ? htmlspecialchars((string) $chances[$index])
+                    : "";
+                $this->displayUrlChanceRow(
+                    "list_urls[{$escapedKeyword}][]",
+                    "list_chances[{$escapedKeyword}][]",
+                    $escapedUrl,
+                    $chance
+                );
+            }
+        } else {
+            // Display one empty row if the list is somehow empty
+            $this->displayUrlChanceRow(
+                "list_urls[{$escapedKeyword}][]",
+                "list_chances[{$escapedKeyword}][]"
+            );
+        }
+
+        // Hidden template row for JS cloning
+        $this->displayUrlChanceRow(
+            "list_urls[{$escapedKeyword}][]",
+            "list_chances[{$escapedKeyword}][]",
+            "",
+            "",
+            true // isTemplate
+        );
+
+        echo <<<HTML
+                </div> <!-- .url-chances-container -->
+                <div class="url-actions">
+                  <button type="button" class="add-url button button-secondary">Add URL</button>
+                  <div class="total-percentage">
+                    Total: <span class="percentage-sum">0</span>%
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div> <!-- .redirect-list-settings -->
+HTML;
+    }
+
+    /**
+     * Display the form section for adding a new redirect list.
+     */
+    private function displayNewListForm(): void
+    {
+        echo <<<HTML
+    <div class="redirect-list-row">
+      <div class="redirect-list-col">
+        <label for="new_list_keyword">New Keyword:</label>
+        <input type="text" id="new_list_keyword" name="new_list_keyword" class="text keyword-input"
+          placeholder="Enter keyword (e.g., random-link)"
+          pattern="^[a-zA-Z0-9_\/-]+$"
+          title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
+      </div>
+    </div>
+    <div class="redirect-list-row">
+      <div class="redirect-list-col full">
+        <label>URLs and Chances (%):</label>
+        <div class="url-chances-container">
+HTML;
+
+        // Display one empty row initially
+        $this->displayUrlChanceRow("new_list_urls[]", "new_list_chances[]");
+
+        // Hidden template row for JS cloning
+        $this->displayUrlChanceRow(
+            "new_list_urls[]",
+            "new_list_chances[]",
+            "",
+            "",
+            true
+        );
+
+        echo <<<HTML
+        </div> <!-- .url-chances-container -->
+        <div class="url-actions">
+          <button type="button" class="add-url button button-secondary">Add URL</button>
+          <div class="total-percentage">
+            Total: <span class="percentage-sum">0</span>%
+          </div>
+        </div>
+      </div>
+    </div>
+HTML;
+    }
+
+    /**
+     * Helper function to display a single URL/Chance row.
+     *
+     * @param string $urlName Name attribute for URL input.
+     * @param string $chanceName Name attribute for chance input.
+     * @param string $urlValue Value for URL input.
+     * @param string $chanceValue Value for chance input.
+     * @param bool $isTemplate Whether this is the hidden template row.
+     */
+    private function displayUrlChanceRow(
+        string $urlName,
+        string $chanceName,
+        string $urlValue = "",
+        string $chanceValue = "",
+        bool $isTemplate = false
+    ): void {
+        $style = $isTemplate ? 'style="display: none;"' : "";
+        $class = $isTemplate ? "url-chance-row template" : "url-chance-row";
+
+        // Visible rows of an *existing* redirect list always need a URL -
+        // an empty URL would silently drop the entire list server-side.
+        // Template rows stay un-required so their hidden inputs don't
+        // block submission. New-list rows are toggled by JS based on
+        // whether the user typed a keyword: requiring them
+        // unconditionally would block every save when the user only
+        // wants to update existing lists.
+        $isNewList = strpos($urlName, "new_list_urls") !== false;
+        $urlRequired = !$isTemplate && !$isNewList ? "required" : "";
+
+        echo <<<HTML
+        <div class="{$class}" {$style}>
+          <input type="url" name="{$urlName}" value="{$urlValue}" class="text url-input" placeholder="https://example.com" {$urlRequired}>
+          <button type="button" class="pick-shortlink button button-secondary" aria-label="Pick a YOURLS shortlink">Pick...</button>
+          <input type="number" name="{$chanceName}" value="{$chanceValue}" class="text chance-input" min="0" max="100" step="any" placeholder="%">
+          <span class="percent-sign">%</span>
+          <button type="button" class="remove-url button" aria-label="Remove URL">x</button>
+        </div>
+    HTML;
+    }
+
+    /**
+     * Fetch all existing YOURLS shortlinks for the picker UI.
+     *
+     * Mirrors the approach used by the Link Front Page plugin: a single
+     * SELECT against the URL table, capped to keep the bootstrap payload
+     * sane on busy installs. Each row is enriched with the resolved short
+     * URL so the JS picker can drop it straight into the input field.
+     *
+     * @return array<int, array{keyword: string, url: string, title: string, shorturl: string}>
+     */
+    private function getAllShortlinks(): array
+    {
+        global $ydb;
+        $table = defined("YOURLS_DB_TABLE_URL") ? YOURLS_DB_TABLE_URL : "yourls_url";
+
+        try {
+            $rows = $ydb->fetchObjects(
+                "SELECT keyword, url, title FROM `{$table}` ORDER BY timestamp DESC LIMIT 5000"
+            );
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $links = [];
+        foreach ($rows as $row) {
+            $keyword = (string) ($row->keyword ?? "");
+            if ($keyword === "") {
+                continue;
+            }
+            $links[] = [
+                "keyword" => $keyword,
+                "url" => (string) ($row->url ?? ""),
+                "title" => (string) ($row->title ?? ""),
+                "shorturl" => yourls_link($keyword),
+            ];
+        }
+        return $links;
+    }
+
+    /**
+     * Output CSS and JavaScript for the admin page.
+     */
+    private function displayAdminAssets(): void
+    {
+        $baseDir = defined('RRM_PLUGIN_DIR') ? RRM_PLUGIN_DIR : __DIR__ . '/../';
+        $cssPath = $baseDir . 'assets/admin.css';
+        $jsPath = $baseDir . 'assets/admin.js';
+
+        $css = is_readable($cssPath) ? (string) file_get_contents($cssPath) : '';
+        $js = is_readable($jsPath) ? (string) file_get_contents($jsPath) : '';
+
+        echo "<style type=\"text/css\">\n" . $css . "\n</style>\n";
+        echo "<script type=\"text/javascript\">\n" . $js . "\n</script>\n";
+    }
+
+    /**
+     * Process admin form submission for updating/adding/deleting lists.
+     */
+    public function processFormSubmission(): void
+    {
+        // Check if it's our action and user is admin
+        if (
+            !isset($_POST["action"]) ||
+            $_POST["action"] !== "update_random_redirect_settings" ||
+            !yourls_is_admin()
+        ) {
+            return;
+        }
+
+        // Verify nonce. Keep YOURLS' default yourls_die(..., 403) failure
+        // path, and only pass a string nonce so malformed nonce[]= payloads
+        // do not emit array-to-string warnings on PHP 8.4+.
+        $nonceInput = $_POST["nonce"] ?? "";
+        $nonce = is_string($nonceInput) ? $nonceInput : "";
+        yourls_verify_nonce("random_redirect_settings_nonce", $nonce);
+
+        $currentSettings = $this->settings; // Use cached settings
+        $newSettings = [];
+        $messages = [
+            "updated" => 0,
+            "created" => 0,
+            "deleted" => 0,
+            "errors" => [],
+        ];
+
+        // --- Handle Reset-All Action ---
+        // Wipes every redirect list. The matching YOURLS shortlinks
+        // themselves are kept (same approach as per-list Delete) so a
+        // reset can't quietly drop unrelated keywords.
+        if (!empty($_POST["reset_all"])) {
+            if (empty($currentSettings)) {
+                yourls_add_notice("No redirect lists to remove.");
+            } elseif (yourls_update_option(self::OPTION_NAME, [])) {
+                yourls_add_notice("All redirect lists have been removed.");
+                $this->loadSettings();
+            } else {
+                yourls_add_notice("Error resetting settings.", "error");
+            }
+            return;
+        }
+
+        // --- Handle Delete Action ---
+        if (isset($_POST["delete_list"]) && !empty($_POST["delete_list"])) {
+            $keywordToDelete = $this->sanitizeKeyword($_POST["delete_list"]);
+            if ($keywordToDelete && isset($currentSettings[$keywordToDelete])) {
+                unset($currentSettings[$keywordToDelete]);
+                // Note: We don't delete the base YOURLS shortlink automatically. Admin can do that manually if desired.
+                if (yourls_update_option(self::OPTION_NAME, $currentSettings)) {
+                    yourls_add_notice(
+                        "Redirect list for keyword '{$keywordToDelete}' deleted successfully."
+                    );
+                    $this->loadSettings(); // Reload settings after successful delete
+                } else {
+                    yourls_add_notice(
+                        "Error deleting list for keyword '{$keywordToDelete}'.",
+                        "error"
+                    );
+                }
+                // Stop further processing after delete
+                return;
+            } else {
+                yourls_add_notice(
+                    "Could not delete list: Keyword '{$keywordToDelete}' not found.",
+                    "error"
+                );
+                return; // Stop if delete was intended but failed
+            }
+        }
+
+        // --- Process Existing Lists ---
+        if (isset($_POST["list_keyword"]) && is_array($_POST["list_keyword"])) {
+            foreach (
+                $_POST["list_keyword"]
+                as $oldKeyword => $newKeywordInput
+            ) {
+                $oldKeyword = $this->sanitizeKeyword($oldKeyword); // Sanitize the key from POST
+                $newKeyword = $this->sanitizeKeyword($newKeywordInput);
+
+                if (!$oldKeyword || !$newKeyword) {
+                    $messages[
+                        "errors"
+                    ][] = "Invalid or empty keyword provided for an existing list (original: '{$oldKeyword}'). Skipped.";
+                    continue;
+                }
+
+                // Check if keyword changed and the new one is already taken by another list *in this submission*
+                if (
+                    $oldKeyword !== $newKeyword &&
+                    isset($newSettings[$newKeyword])
+                ) {
+                    $messages[
+                        "errors"
+                    ][] = "Keyword '{$newKeyword}' is used multiple times in this submission. Reverted change for '{$oldKeyword}'.";
+                    $newKeyword = $oldKeyword; // Keep the old keyword to avoid conflict
+                }
+
+                $urls = isset($_POST["list_urls"][$oldKeyword])
+                    ? $this->sanitizeUrlArray($_POST["list_urls"][$oldKeyword])
+                    : [];
+                $chances = isset($_POST["list_chances"][$oldKeyword])
+                    ? $this->sanitizeChanceArray(
+                        $_POST["list_chances"][$oldKeyword]
+                    )
+                    : [];
+
+                if (empty($urls)) {
+                    $messages[
+                        "errors"
+                    ][] = "No valid URLs provided for keyword '{$newKeyword}'. List not saved.";
+                    continue; // Skip if no URLs
+                }
+
+                // Ensure chances array matches urls array size
+                $chances = array_slice($chances, 0, count($urls));
+                $chances = array_pad($chances, count($urls), 0.0);
+
+                $newSettings[$newKeyword] = [
+                    "enabled" => isset($_POST["list_enabled"][$oldKeyword]),
+                    "urls" => $urls,
+                    "chances" => $chances,
+                ];
+
+                // Ensure shortlink exists/is updated for the *new* keyword
+                $this->ensureShortlinkExists(
+                    $newKeyword,
+                    $urls[0], // Use first URL
+                    $messages["created"],
+                    $messages["updated"],
+                    $messages["errors"]
+                );
+
+                // If keyword changed, we might need to handle the old shortlink?
+                // For now, we leave the old shortlink as is. User can delete it manually.
+            }
+        }
+
+        // --- Process New List ---
+        if (
+            !empty($_POST["new_list_keyword"]) // Only check if keyword is provided
+        ) {
+            $newKeyword = $this->sanitizeKeyword($_POST["new_list_keyword"]);
+            $urls = $this->sanitizeUrlArray($_POST["new_list_urls"] ?? []);
+            $chances = isset($_POST["new_list_chances"])
+                ? $this->sanitizeChanceArray($_POST["new_list_chances"])
+                : [];
+
+            if (!$newKeyword) {
+                $messages["errors"][] =
+                    "Invalid or empty keyword provided for the new list. Skipped.";
+            } elseif (isset($newSettings[$newKeyword])) {
+                $messages[
+                    "errors"
+                ][] = "The new keyword '{$newKeyword}' conflicts with another list in this submission. New list skipped.";
+            } elseif (empty($urls)) {
+                $messages[
+                    "errors"
+                ][] = "No valid URLs provided for the new keyword '{$newKeyword}'. New list not saved.";
+            } else {
+                // Ensure chances array matches urls array size
+                $chances = array_slice($chances, 0, count($urls));
+                $chances = array_pad($chances, count($urls), 0.0);
+
+                $newSettings[$newKeyword] = [
+                    "enabled" => true, // New lists are enabled by default
+                    "urls" => $urls,
+                    "chances" => $chances,
+                ];
+
+                // Create shortlink for the new keyword
+                $this->ensureShortlinkExists(
+                    $newKeyword,
+                    $urls[0],
+                    $messages["created"],
+                    $messages["updated"],
+                    $messages["errors"]
+                );
+            }
+        }
+
+        // --- Save Settings ---
+        // yourls_update_option() returns false in two cases that aren't
+        // errors: (1) its short-circuit `$newvalue === $oldvalue` check
+        // already detected no change, and (2) MySQL's UPDATE affects 0
+        // rows because the row is byte-identical (no CLIENT_FOUND_ROWS
+        // flag in YOURLS). Detect "nothing changed" up-front and stay
+        // silent - no notice at all - so the user doesn't see the
+        // misleading "Error saving settings." message after a no-op
+        // save. We still let ensureShortlinkExists() above run on every
+        // save so a manually deleted backing shortlink can be re-created
+        // by re-saving.
+        if ($newSettings !== $this->settings) {
+            if (yourls_update_option(self::OPTION_NAME, $newSettings)) {
+                yourls_add_notice("Random Redirect settings saved successfully.");
+                $this->loadSettings(); // Reload settings after successful save
+            } else {
+                yourls_add_notice("Error saving settings.", "error");
+            }
+        }
+
+        // --- Display Summary Notices ---
+        if ($messages["created"] > 0) {
+            yourls_add_notice(
+                "Created {$messages["created"]} new shortlink(s)."
+            );
+        }
+        if ($messages["updated"] > 0) {
+            yourls_add_notice(
+                "Updated {$messages["updated"]} existing shortlink(s)."
+            );
+        }
+        foreach ($messages["errors"] as $error) {
+            yourls_add_notice($error, "error");
+        }
+    }
+
+    /**
+     * Sanitize a keyword string. Allows alphanumeric, hyphen, underscore, forward slash.
+     *
+     * @param mixed $keyword Input keyword.
+     * @return string Sanitized keyword or empty string if invalid.
+     */
+    private function sanitizeKeyword($keyword): string
+    {
+        if (!is_string($keyword)) {
+            return "";
+        }
+        $keyword = trim($keyword);
+        // Allow letters, numbers, hyphen, underscore, forward slash.
+        // Remove leading/trailing slashes and collapse multiple slashes.
+        $keyword = trim($keyword, "/");
+        // preg_replace can return null on regex error - coalesce so PHP 8.1+
+        // doesn't emit a deprecation when the result reaches preg_match.
+        $collapsed = preg_replace("#/+#", "/", $keyword);
+        $keyword = is_string($collapsed) ? $collapsed : $keyword;
+        if (preg_match('/^[a-zA-Z0-9\-_\/]+$/', $keyword)) {
+            return $keyword;
+        }
+        return ""; // Invalid characters
+    }
+
+    /**
+     * Sanitize an array of URLs.
+     *
+     * @param mixed $urls Input array.
+     * @return array<int, string> Array of valid URLs.
+     */
+    private function sanitizeUrlArray($urls): array
+    {
+        if (!is_array($urls)) {
+            return [];
+        }
+        $sanitizedUrls = [];
+        foreach ($urls as $url) {
+            if (is_string($url)) {
+                $trimmedUrl = trim($url);
+                // Use filter_var for basic URL validation
+                if (
+                    !empty($trimmedUrl) &&
+                    filter_var($trimmedUrl, FILTER_VALIDATE_URL)
+                ) {
+                    $sanitizedUrls[] = $trimmedUrl;
+                }
+            }
+        }
+        // Re-index the array
+        return array_values($sanitizedUrls);
+    }
+
+    /**
+     * Sanitize an array of chance values.
+     *
+     * @param mixed $chances Input array.
+     * @return array<int, float> Array of valid, non-negative float chances.
+     */
+    private function sanitizeChanceArray($chances): array
+    {
+        if (!is_array($chances)) {
+            return [];
+        }
+        $sanitizedChances = [];
+        foreach ($chances as $chance) {
+            $floatVal = filter_var($chance, FILTER_VALIDATE_FLOAT);
+            // Ensure it's a non-negative float, default to 0.0 if empty or invalid
+            $sanitizedChances[] =
+                $floatVal !== false && $floatVal >= 0 ? $floatVal : 0.0;
+        }
+        return $sanitizedChances;
+    }
+
+    /**
+     * Ensure a YOURLS shortlink exists for the given keyword, pointing to the first URL.
+     * Creates or updates the shortlink as needed.
+     *
+     * @param string $keyword The keyword (must be sanitized).
+     * @param string $url The target URL (must be sanitized and valid).
+     * @param int &$created Counter for created shortlinks.
+     * @param int &$updated Counter for updated shortlinks.
+     * @param array &$errors Array to store error messages.
+     */
+    private function ensureShortlinkExists(
+        string $keyword,
+        string $url,
+        int &$created,
+        int &$updated,
+        array &$errors
+    ): void {
+        if (empty($keyword) || empty($url)) {
+            $errors[] = "Cannot ensure shortlink: Invalid keyword or URL provided. Keyword: '{$keyword}'";
+            return;
+        }
+
+        // Check if keyword is reserved or already taken by YOURLS core/another plugin
+        if (yourls_keyword_is_reserved($keyword)) {
+            $errors[] = "Keyword '{$keyword}' is reserved and cannot be used.";
+            return;
+        }
+
+        // If the first random URL is itself a YOURLS shortlink on this
+        // install, resolve it to its long URL before handing it to
+        // yourls_add_new_link(). YOURLS rejects shortlink-to-shortlink
+        // chains with "URL is a shortened URL", which surfaces in the
+        // admin as "Failed to create shortlink for 'foo': URL is een
+        // verkorte URL" the moment a user picks an existing shortlink
+        // from the picker as the first target. The random redirect
+        // itself still uses the original (short) URL - only the
+        // auto-created backing shortlink uses the resolved long URL.
+        $url = $this->resolveYourlsShortlink($url);
+
+        $existingUrl = yourls_get_keyword_longurl($keyword);
+
+        if ($existingUrl === false) {
+            // Shortlink does not exist, create it
+            $result = yourls_add_new_link($url, $keyword);
+            if ($result && $result["status"] === "success") {
+                $created++;
+            } elseif ($result && isset($result["message"])) {
+                // Check if the failure was due to the keyword already existing (race condition?)
+                if (strpos($result["message"], "already exists") === false) {
+                    $errors[] = "Failed to create shortlink for '{$keyword}': {$result["message"]}";
+                } else {
+                    // Keyword exists now, maybe created by another process or race condition. Try updating.
+                    $existingUrl = yourls_get_keyword_longurl($keyword); // Re-fetch
+                    if ($existingUrl !== false && $existingUrl !== $url) {
+                        if (
+                            function_exists("yourls_edit_link_url") &&
+                            yourls_edit_link_url($keyword, $url)
+                        ) {
+                            // Use specific function if available (YOURLS 1.7.3+)
+                            $updated++;
+                        } else {
+                            // Fallback for older YOURLS or if specific function fails
+                            if (yourls_edit_link($url, $keyword, $keyword)) {
+                                // This updates URL and optionally title
+                                $updated++;
+                            } else {
+                                $errors[] = "Failed to update existing shortlink URL for '{$keyword}' after creation conflict.";
+                            }
+                        }
+                    }
+                }
+            } else {
+                $errors[] = "Failed to create shortlink for '{$keyword}' (Unknown error).";
+            }
+        } elseif ($existingUrl !== $url) {
+            // Shortlink exists, but URL is different, update it
+            if (
+                function_exists("yourls_edit_link_url") &&
+                yourls_edit_link_url($keyword, $url)
+            ) {
+                // Use specific function if available (YOURLS 1.7.3+)
+                $updated++;
+            } else {
+                // Fallback for older YOURLS or if specific function fails
+                if (yourls_edit_link($url, $keyword, $keyword)) {
+                    // This updates URL and optionally title
+                    $updated++;
+                } else {
+                    $errors[] = "Failed to update existing shortlink URL for '{$keyword}'.";
+                }
+            }
+        }
+        // If $existingUrl === $url, do nothing, it's already correct.
+    }
+
+    /**
+     * If $url is a YOURLS shortlink on this install, swap it for its
+     * long URL. Any other URL is returned unchanged.
+     *
+     * Used to dodge YOURLS' "URL is a shortened URL" check inside
+     * yourls_add_new_link() when the auto-created backing shortlink for
+     * a random redirect would otherwise point at another shortlink on
+     * the same domain. Compares hosts case-insensitively because YOURLS
+     * normalises hostnames that way too.
+     *
+     * @param string $url Possibly a YOURLS short URL.
+     * @return string Long URL if resolvable, otherwise the original.
+     */
+    private function resolveYourlsShortlink(string $url): string
+    {
+        if ($url === "" || !defined("YOURLS_SITE")) {
+            return $url;
+        }
+
+        $siteHost = parse_url(YOURLS_SITE, PHP_URL_HOST);
+        $urlHost = parse_url($url, PHP_URL_HOST);
+        if (
+            !is_string($siteHost) ||
+            !is_string($urlHost) ||
+            strcasecmp($siteHost, $urlHost) !== 0
+        ) {
+            return $url;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        $keyword = trim(is_string($path) ? $path : "", "/");
+
+        // YOURLS can live in subdirectory (eg /links). Strip that
+        // install path from incoming short URL before keyword lookup.
+        $sitePath = trim((string) parse_url(YOURLS_SITE, PHP_URL_PATH), "/");
+        if ($sitePath !== "") {
+            if ($keyword === $sitePath) {
+                return $url;
+            }
+            $sitePrefix = $sitePath . "/";
+            if (strpos($keyword, $sitePrefix) === 0) {
+                $keyword = substr($keyword, strlen($sitePrefix));
+            }
+        }
+
+        if ($keyword === "") {
+            return $url;
+        }
+
+        $longUrl = yourls_get_keyword_longurl($keyword);
+        if (is_string($longUrl) && $longUrl !== "") {
+            return $longUrl;
+        }
+        return $url;
+    }
+}

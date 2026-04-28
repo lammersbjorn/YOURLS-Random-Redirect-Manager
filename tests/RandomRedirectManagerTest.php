@@ -6,6 +6,17 @@ final class RandomRedirectManagerTest extends PHPUnit\Framework\TestCase
 {
     private const OPTION_NAME = 'random_redirect_settings';
 
+    public function test_plugin_bootstrap_structure_files_exist(): void
+    {
+        $root = dirname(__DIR__);
+
+        $this->assertFileExists($root . '/plugin.php');
+        $this->assertFileExists($root . '/includes/bootstrap.php');
+        $this->assertFileExists($root . '/includes/class-random-redirect-manager.php');
+        $this->assertFileExists($root . '/assets/admin.css');
+        $this->assertFileExists($root . '/assets/admin.js');
+    }
+
     public function test_plugin_class_is_loaded(): void
     {
         $this->assertTrue(class_exists('RandomRedirectManager'));
