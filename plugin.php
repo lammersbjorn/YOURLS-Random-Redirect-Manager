@@ -34,13 +34,19 @@ class RandomRedirectManager
 
         // Admin page hooks
         yourls_add_action("plugins_loaded", [$this, "addAdminPage"]);
-        yourls_add_action("admin_page_random_redirect_settings", [
-            $this,
-            "displayAdminPage",
-        ]);
 
-        // Process form submissions
-        yourls_add_action("admin_init", [$this, "processFormSubmission"]);
+        // Process form submissions on the plugin page itself. The
+        // `load-<plugin_page>` action fires from yourls_plugin_admin_page()
+        // *after* yourls_maybe_require_auth() has defined YOURLS_USER, so
+        // yourls_verify_nonce() sees the same user as yourls_create_nonce()
+        // did when the form was rendered. The earlier `admin_init` hook
+        // ran from Init::__construct() *before* auth, leaving YOURLS_USER
+        // undefined — that mismatch is what produced the
+        // "Unauthorized action or expired link" failure on save.
+        yourls_add_action("load-random_redirect_settings", [
+            $this,
+            "processFormSubmission",
+        ]);
 
         // Check requests for redirects
         yourls_add_action("shutdown", [$this, "checkRequest"]);
