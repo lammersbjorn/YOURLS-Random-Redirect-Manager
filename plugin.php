@@ -482,7 +482,12 @@ HTML;
         // admin chrome. Colors use rgba()/inherit so the form looks right on
         // both vanilla YOURLS and the Sleeky admin theme (light + dark).
         $css = <<<'CSS'
-      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: #e7f3ff; border-left: 4px solid #0080ff; color: #0d2a3e; }
+      /* Force the info-box color onto its <p> children too — Sleeky's
+         dark theme sets `color` directly on `p`, which beats the
+         inherited color from `.rrm-info-box` and leaves the body text
+         nearly invisible against the solid light-blue background. */
+      .rrm-page .rrm-info-box, .rrm-page .rrm-info-box p { color: #0d2a3e; }
+      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: #e7f3ff; border-left: 4px solid #0080ff; }
       .rrm-page .rrm-info-box p { margin: 4px 0; }
       .rrm-page .rrm-info-box strong { color: #062840; }
       .rrm-page .settings-group, .rrm-page .redirect-list-settings { margin: 20px 0; padding: 0; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; background: transparent; }
