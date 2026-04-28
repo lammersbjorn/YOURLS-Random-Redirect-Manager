@@ -966,8 +966,18 @@ JS;
         }
 
         // --- Save Settings ---
-        // Only update if there were no critical errors preventing saving (like keyword conflicts handled above)
-        if (yourls_update_option(self::OPTION_NAME, $newSettings)) {
+        // yourls_update_option() returns false in two cases that aren't
+        // errors: (1) its short-circuit `$newvalue === $oldvalue` check
+        // already detected no change, and (2) MySQL's UPDATE affects 0
+        // rows because the row is byte-identical (no CLIENT_FOUND_ROWS
+        // flag in YOURLS). Detect "nothing changed" up-front so we don't
+        // surface the misleading "Error saving settings." notice when
+        // the user clicked Save without touching anything. We still let
+        // ensureShortlinkExists() above run on every save so a manually
+        // deleted backing shortlink can be re-created by re-saving.
+        if ($newSettings === $this->settings) {
+            yourls_add_notice("No changes to save.");
+        } elseif (yourls_update_option(self::OPTION_NAME, $newSettings)) {
             yourls_add_notice("Random Redirect settings saved successfully.");
             $this->loadSettings(); // Reload settings after successful save
         } else {
