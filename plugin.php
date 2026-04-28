@@ -8,6 +8,10 @@
  * Author URI: https://github.com/lammersbjorn
  * License: BSD 3-Clause
  * License URI: https://opensource.org/licenses/BSD-3-Clause
+ * Requires at least: YOURLS 1.7.3
+ * Tested up to: YOURLS 1.10.3
+ * Requires PHP: 7.4
+ * Tested up to PHP: 8.5
  */
 
 // Prevent direct access to this file
@@ -30,13 +34,19 @@ class RandomRedirectManager
 
         // Admin page hooks
         yourls_add_action("plugins_loaded", [$this, "addAdminPage"]);
-        yourls_add_action("admin_page_random_redirect_settings", [
-            $this,
-            "displayAdminPage",
-        ]);
 
-        // Process form submissions
-        yourls_add_action("admin_init", [$this, "processFormSubmission"]);
+        // Process form submissions on the plugin page itself. The
+        // `load-<plugin_page>` action fires from yourls_plugin_admin_page()
+        // *after* yourls_maybe_require_auth() has defined YOURLS_USER, so
+        // yourls_verify_nonce() sees the same user as yourls_create_nonce()
+        // did when the form was rendered. The earlier `admin_init` hook
+        // ran from Init::__construct() *before* auth, leaving YOURLS_USER
+        // undefined — that mismatch is what produced the
+        // "Unauthorized action or expired link" failure on save.
+        yourls_add_action("load-random_redirect_settings", [
+            $this,
+            "processFormSubmission",
+        ]);
 
         // Check requests for redirects
         yourls_add_action("shutdown", [$this, "checkRequest"]);
@@ -63,8 +73,12 @@ class RandomRedirectManager
             return;
         }
 
-        // Get the requested keyword (path part of the URL)
-        $request = trim(parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH), "/");
+        // Get the requested keyword (path part of the URL).
+        // PHP 8.1+ deprecates passing null to string functions, so coalesce
+        // any null/false from parse_url() (malformed REQUEST_URI) to "".
+        $requestUri = isset($_SERVER["REQUEST_URI"]) ? (string) $_SERVER["REQUEST_URI"] : "";
+        $path = parse_url($requestUri, PHP_URL_PATH);
+        $request = trim(is_string($path) ? $path : "", "/");
         // Decode URL-encoded characters (e.g., %20 -> space)
         $request = urldecode($request);
 
@@ -170,11 +184,14 @@ class RandomRedirectManager
         // Output CSS and JS first
         $this->displayAdminAssets();
 
-        // Output HTML using HEREDOC for better readability
+        // Output HTML using HEREDOC for better readability. The whole page
+        // is wrapped in `.rrm-page` so the plugin styles don't bleed into
+        // the surrounding YOURLS / Sleeky admin chrome.
         echo <<<HTML
+    <div class="rrm-page">
     <h2>Random Redirect Manager</h2>
 
-    <div class="notice notice-info">
+    <div class="rrm-info-box">
       <p><strong>Note:</strong> When you add or update a redirect list, the plugin automatically creates/updates the corresponding YOURLS shortlink. The first URL in the list is used as the target for the shortlink.</p>
       <p><strong>Chance Percentages:</strong> Define the probability for each URL. The system normalizes positive percentages if they don't sum to 100%. URLs with 0% or no percentage set won't be chosen unless all percentages are zero (then it's equal distribution).</p>
     </div>
@@ -209,8 +226,45 @@ HTML;
       </div> <!-- .settings-group.add-new-list -->
 
       <p><input type="submit" value="Save All Settings" class="button button-primary"></p>
+
+      <div class="rrm-danger-zone">
+        <h4>Danger zone</h4>
+        <p>Removes every redirect list configured here. The matching YOURLS shortlinks themselves are kept and will need to be deleted manually if you don't want them anymore.</p>
+        <button type="submit" name="reset_all" value="1" formnovalidate
+          class="button reset-all-button"
+          onclick="return confirm('Are you sure you want to remove ALL redirect lists? This cannot be undone.')">
+          Reset all redirect lists
+        </button>
+      </div>
     </form>
+
+    <dialog id="rrm-picker" class="rrm-picker">
+      <h3>Pick a YOURLS shortlink</h3>
+      <input type="text" id="rrm-picker-q" placeholder="Search keyword, URL or title…" autocomplete="off">
+      <ul id="rrm-picker-list"></ul>
+      <div class="rrm-picker-actions">
+        <button type="button" id="rrm-picker-cancel" class="button button-secondary">Cancel</button>
+      </div>
+    </dialog>
+    </div> <!-- .rrm-page -->
 HTML;
+
+        // Bootstrap payload for the shortlink picker. The JS inside
+        // displayAdminAssets() reads this on load. JSON_HEX_TAG escapes
+        // `<` and `>` to `<` / `>` so a user-controlled shortlink
+        // URL or title cannot smuggle a `</script>` sequence and break out
+        // of the inline JSON block. JSON.parse handles the escapes natively.
+        $shortlinks = $this->getAllShortlinks();
+        $payload = json_encode(
+            ["shortlinks" => $shortlinks],
+            JSON_UNESCAPED_SLASHES |
+                JSON_UNESCAPED_UNICODE |
+                JSON_HEX_TAG |
+                JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        echo "<script id=\"rrm-bootstrap\" type=\"application/json\">"
+            . ($payload !== false ? $payload : '{"shortlinks":[]}')
+            . "</script>\n";
     }
 
     /**
@@ -238,7 +292,7 @@ HTML;
                 <input type="checkbox" name="list_enabled[{$escapedKeyword}]" value="1" {$checked}>
                 Enable
               </label>
-              <button type="submit" name="delete_list" value="{$escapedKeyword}"
+              <button type="submit" name="delete_list" value="{$escapedKeyword}" formnovalidate
                 class="button delete-list-button" onclick="return confirm('Are you sure you want to delete the list for keyword \'{$escapedKeyword}\'? This action is immediate and cannot be undone.')">
                 Delete List
               </button>
@@ -253,7 +307,7 @@ HTML;
                   value="{$escapedKeyword}"
                   class="text keyword-input"
                   required
-                  pattern="^[a-zA-Z0-9-_\/]+$"
+                  pattern="^[a-zA-Z0-9_\/-]+$"
                   title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
               </div>
             </div>
@@ -320,7 +374,7 @@ HTML;
         <label for="new_list_keyword">New Keyword:</label>
         <input type="text" id="new_list_keyword" name="new_list_keyword" class="text keyword-input"
           placeholder="Enter keyword (e.g., random-link)"
-          pattern="^[a-zA-Z0-9-_\/]+$"
+          pattern="^[a-zA-Z0-9_\/-]+$"
           title="Allowed characters: a-z, A-Z, 0-9, -, _, /">
       </div>
     </div>
@@ -373,13 +427,21 @@ HTML;
     ): void {
         $style = $isTemplate ? 'style="display: none;"' : "";
         $class = $isTemplate ? "url-chance-row template" : "url-chance-row";
-        
-        // Only make URL required for existing lists, not for new lists
-        $urlRequired = !$isTemplate && empty($urlValue) && strpos($urlName, 'new_list_urls') === false ? "required" : "";
-    
+
+        // Visible rows of an *existing* redirect list always need a URL —
+        // an empty URL would silently drop the entire list server-side.
+        // Template rows stay un-required so their hidden inputs don't
+        // block submission. New-list rows are toggled by JS based on
+        // whether the user typed a keyword: requiring them
+        // unconditionally would block every save when the user only
+        // wants to update existing lists.
+        $isNewList = strpos($urlName, "new_list_urls") !== false;
+        $urlRequired = !$isTemplate && !$isNewList ? "required" : "";
+
         echo <<<HTML
         <div class="{$class}" {$style}>
           <input type="url" name="{$urlName}" value="{$urlValue}" class="text url-input" placeholder="https://example.com" {$urlRequired}>
+          <button type="button" class="pick-shortlink button button-secondary" aria-label="Pick a YOURLS shortlink">Pick…</button>
           <input type="number" name="{$chanceName}" value="{$chanceValue}" class="text chance-input" min="0" max="100" step="any" placeholder="%">
           <span class="percent-sign">%</span>
           <button type="button" class="remove-url button" aria-label="Remove URL">✕</button>
@@ -388,47 +450,157 @@ HTML;
     }
 
     /**
+     * Fetch all existing YOURLS shortlinks for the picker UI.
+     *
+     * Mirrors the approach used by the Link Front Page plugin: a single
+     * SELECT against the URL table, capped to keep the bootstrap payload
+     * sane on busy installs. Each row is enriched with the resolved short
+     * URL so the JS picker can drop it straight into the input field.
+     *
+     * @return array<int, array{keyword: string, url: string, title: string, shorturl: string}>
+     */
+    private function getAllShortlinks(): array
+    {
+        global $ydb;
+        $table = defined("YOURLS_DB_TABLE_URL") ? YOURLS_DB_TABLE_URL : "yourls_url";
+
+        try {
+            $rows = $ydb->fetchObjects(
+                "SELECT keyword, url, title FROM `{$table}` ORDER BY timestamp DESC LIMIT 5000"
+            );
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $links = [];
+        foreach ($rows as $row) {
+            $keyword = (string) ($row->keyword ?? "");
+            if ($keyword === "") {
+                continue;
+            }
+            $links[] = [
+                "keyword" => $keyword,
+                "url" => (string) ($row->url ?? ""),
+                "title" => (string) ($row->title ?? ""),
+                "shorturl" => yourls_link($keyword),
+            ];
+        }
+        return $links;
+    }
+
+    /**
      * Output CSS and JavaScript for the admin page.
      */
     private function displayAdminAssets(): void
     {
-        // CSS - Using HEREDOC for multiline string
+        // CSS - Using HEREDOC for multiline string. Every selector is scoped
+        // to .rrm-page so the plugin styles don't bleed into the surrounding
+        // admin chrome. Colors use rgba()/inherit so the form looks right on
+        // both vanilla YOURLS and the Sleeky admin theme (light + dark).
         $css = <<<'CSS'
-      .notice { margin: 15px 0; padding: 10px 15px; border-radius: 5px; }
-      .notice-info { background-color: rgba(0, 128, 255, 0.1); border-left: 4px solid #0080ff; }
-      .settings-group, .redirect-list-settings { margin: 20px 0; padding: 15px; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; }
-      .redirect-lists-container { margin: 20px 0; display: flex; flex-direction: column; gap: 15px; }
-      .redirect-list-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); background-color: rgba(128, 128, 128, 0.05); }
-      .redirect-list-header h4 { margin: 0; }
-      .list-actions { display: flex; align-items: center; gap: 10px; }
-      .redirect-list-content { padding: 15px; }
-      .redirect-list-row { display: flex; gap: 15px; margin-bottom: 15px; }
-      .redirect-list-row:last-child { margin-bottom: 0; }
-      .redirect-list-col { flex: 1; }
-      .redirect-list-col.full { flex: 0 0 100%; }
-      .redirect-list-col label { display: block; margin-bottom: 5px; font-weight: bold; }
-      input.text, textarea.text { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 3px; background: transparent; color: inherit; box-sizing: border-box; }
-      input:required:invalid { border-color: #f44336; }
-      .redirect-list-toggle { display: flex; align-items: center; gap: 5px; font-weight: normal; }
-      .button.delete-list-button { background-color: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
-      .button.delete-list-button:hover { background-color: #c82333; }
-      .url-chances-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-      .url-chance-row { display: flex; align-items: center; gap: 10px; width: 100%; }
-      .url-input { flex: 3; min-width: 250px; }
-      .chance-input { flex: 0 0 80px; width: 80px; text-align: right; }
-      .percent-sign { flex: 0 0 10px; margin-right: 5px; }
-      .remove-url { flex: 0 0 25px; background-color: #f44336; color: white; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
-      .remove-url:hover { background-color: #e53935; }
-      .url-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
-      .total-percentage { color: #666; font-weight: bold; }
-      .percentage-sum { color: #008000; }
-      .percentage-sum.error { color: #f44336; font-weight: bold; }
-      .add-url { cursor: pointer; }
+      /* Force the info-box color onto its <p> children too — Sleeky's
+         dark theme sets `color` directly on `p`, which beats the
+         inherited color from `.rrm-info-box` and leaves the body text
+         nearly invisible against the solid light-blue background. */
+      .rrm-page .rrm-info-box, .rrm-page .rrm-info-box p { color: #0d2a3e; }
+      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: #e7f3ff; border-left: 4px solid #0080ff; }
+      .rrm-page .rrm-info-box p { margin: 4px 0; }
+      .rrm-page .rrm-info-box strong { color: #062840; }
+      .rrm-page .settings-group, .rrm-page .redirect-list-settings { margin: 20px 0; padding: 0; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; background: transparent; }
+      .rrm-page .settings-group { padding: 15px; }
+      .rrm-page .redirect-lists-container { margin: 20px 0; display: flex; flex-direction: column; gap: 15px; }
+      .rrm-page .redirect-list-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-bottom: 1px solid rgba(128, 128, 128, 0.2); background-color: rgba(128, 128, 128, 0.05); }
+      .rrm-page .redirect-list-header h4 { margin: 0; font-size: 1em; }
+      .rrm-page .keyword-display { font-family: monospace; }
+      .rrm-page .list-actions { display: flex; align-items: center; gap: 10px; }
+      .rrm-page .redirect-list-content { padding: 15px; }
+      .rrm-page .redirect-list-row { display: flex; gap: 15px; margin-bottom: 15px; }
+      .rrm-page .redirect-list-row:last-child { margin-bottom: 0; }
+      .rrm-page .redirect-list-col { flex: 1; }
+      .rrm-page .redirect-list-col.full { flex: 0 0 100%; }
+      .rrm-page .redirect-list-col label { display: block; margin-bottom: 5px; font-weight: bold; }
+      .rrm-page input.text, .rrm-page textarea.text { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 3px; background: transparent; color: inherit; box-sizing: border-box; }
+      .rrm-page input.text:focus, .rrm-page textarea.text:focus { outline: 2px solid rgba(0, 128, 255, 0.4); outline-offset: 1px; }
+      .rrm-page input:required:invalid { border-color: #f44336; }
+      .rrm-page .redirect-list-toggle { display: flex; align-items: center; gap: 5px; font-weight: normal; }
+      .rrm-page .button.delete-list-button { background-color: #dc3545; color: #fff; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+      .rrm-page .button.delete-list-button:hover { background-color: #c82333; }
+      .rrm-page .url-chances-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+      .rrm-page .url-chance-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+      .rrm-page .url-input { flex: 3; min-width: 200px; }
+      .rrm-page .chance-input { flex: 0 0 80px; width: 80px; text-align: right; }
+      .rrm-page .percent-sign { flex: 0 0 10px; margin-right: 5px; opacity: 0.7; }
+      .rrm-page .remove-url { flex: 0 0 25px; background-color: #f44336; color: #fff; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
+      .rrm-page .remove-url:hover { background-color: #e53935; }
+      .rrm-page .url-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+      .rrm-page .total-percentage { font-weight: bold; opacity: 0.8; }
+      .rrm-page .percentage-sum { color: #008000; }
+      .rrm-page .percentage-sum.error { color: #f44336; font-weight: bold; }
+      /* Secondary buttons (Add URL, Pick…, Cancel). Translucent grays so the
+         button blends with both Sleeky's light and dark themes — text uses
+         `inherit` to pick up the surrounding admin chrome's foreground color. */
+      .rrm-page .button.button-secondary, .rrm-page .add-url, .rrm-page .pick-shortlink {
+        background-color: rgba(128, 128, 128, 0.18);
+        color: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.5);
+        padding: 6px 14px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 0.9em;
+        line-height: 1.4;
+        font-weight: 500;
+        transition: background-color 0.15s, border-color 0.15s;
+      }
+      .rrm-page .button.button-secondary:hover, .rrm-page .add-url:hover, .rrm-page .pick-shortlink:hover {
+        background-color: rgba(128, 128, 128, 0.3);
+        border-color: rgba(128, 128, 128, 0.7);
+      }
+      .rrm-page .pick-shortlink { flex: 0 0 auto; padding: 6px 10px; font-size: 0.85em; }
+      /* Danger zone (reset all). Sits below the form's main Save button
+         and uses the same red accent as per-list Delete buttons. */
+      .rrm-page .rrm-danger-zone { margin-top: 25px; padding: 15px; border: 1px solid rgba(220, 53, 69, 0.4); border-radius: 5px; background-color: rgba(220, 53, 69, 0.06); }
+      .rrm-page .rrm-danger-zone h4 { margin: 0 0 6px; color: #dc3545; font-size: 1em; }
+      .rrm-page .rrm-danger-zone p { margin: 0 0 10px; opacity: 0.85; font-size: 0.9em; }
+      .rrm-page .button.reset-all-button { background-color: #dc3545; color: #fff; border: none; padding: 8px 16px; border-radius: 3px; cursor: pointer; font-weight: 600; }
+      .rrm-page .button.reset-all-button:hover { background-color: #c82333; }
+      /* Shortlink picker dialog (light variant — default) */
+      .rrm-page .rrm-picker { width: min(600px, 92vw); max-height: 80vh; padding: 18px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 6px; background: #fff; color: #1a1a1a; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); }
+      .rrm-page .rrm-picker::backdrop { background: rgba(0, 0, 0, 0.45); }
+      .rrm-page .rrm-picker h3 { margin: 0 0 10px; font-size: 1.05em; color: inherit; }
+      .rrm-page .rrm-picker input[type="text"] { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 3px; box-sizing: border-box; margin-bottom: 10px; background: #fff; color: #1a1a1a; }
+      .rrm-page .rrm-picker ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 3px; background: transparent; }
+      .rrm-page .rrm-picker li { padding: 8px 10px; border-bottom: 1px solid rgba(128, 128, 128, 0.15); cursor: pointer; color: inherit; }
+      .rrm-page .rrm-picker li:last-child { border-bottom: none; }
+      .rrm-page .rrm-picker li:hover, .rrm-page .rrm-picker li.is-active { background: rgba(0, 128, 255, 0.08); }
+      .rrm-page .rrm-picker li strong { font-family: monospace; color: #0080ff; }
+      .rrm-page .rrm-picker .rrm-picker-url { display: block; font-size: 0.85em; color: #555; word-break: break-all; }
+      .rrm-page .rrm-picker .rrm-picker-title { display: block; font-size: 0.85em; color: #888; font-style: italic; }
+      .rrm-page .rrm-picker-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+      /* Shortlink picker dialog — dark variant. JS adds `.rrm-dark` when
+         Sleeky's <meta name="sleeky_theme" content="dark"> is present so
+         the popup matches the surrounding dark chrome instead of slamming
+         a stark white panel into the middle of the page. */
+      .rrm-page .rrm-picker.rrm-dark { background: #2a2a2a; color: #e0e0e0; border-color: rgba(255, 255, 255, 0.15); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); }
+      .rrm-page .rrm-picker.rrm-dark::backdrop { background: rgba(0, 0, 0, 0.65); }
+      .rrm-page .rrm-picker.rrm-dark input[type="text"] { background: #1d1d1d; color: #e0e0e0; border-color: rgba(255, 255, 255, 0.2); }
+      .rrm-page .rrm-picker.rrm-dark input[type="text"]::placeholder { color: rgba(255, 255, 255, 0.4); }
+      .rrm-page .rrm-picker.rrm-dark ul { border-color: rgba(255, 255, 255, 0.12); }
+      .rrm-page .rrm-picker.rrm-dark li { border-color: rgba(255, 255, 255, 0.08); }
+      .rrm-page .rrm-picker.rrm-dark li:hover, .rrm-page .rrm-picker.rrm-dark li.is-active { background: rgba(0, 128, 255, 0.18); }
+      .rrm-page .rrm-picker.rrm-dark li strong { color: #4da3ff; }
+      .rrm-page .rrm-picker.rrm-dark .rrm-picker-url { color: #b0b0b0; }
+      .rrm-page .rrm-picker.rrm-dark .rrm-picker-title { color: #888; }
+      .rrm-page .rrm-picker.rrm-dark .button.button-secondary { background-color: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: #e0e0e0; }
+      .rrm-page .rrm-picker.rrm-dark .button.button-secondary:hover { background-color: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.4); }
       @media (max-width: 768px) {
-        .redirect-list-row { flex-direction: column; gap: 10px; }
-        .url-chance-row { flex-wrap: wrap; }
-        .url-input { min-width: 200px; }
-        .list-actions { flex-direction: column; align-items: flex-start; gap: 5px; }
+        .rrm-page .redirect-list-row { flex-direction: column; gap: 10px; }
+        .rrm-page .url-chance-row { flex-wrap: wrap; }
+        .rrm-page .url-input { min-width: 200px; }
+        .rrm-page .list-actions { flex-direction: column; align-items: flex-start; gap: 5px; }
       }
 CSS;
 
@@ -437,6 +609,113 @@ CSS;
       document.addEventListener('DOMContentLoaded', function() {
         const form = document.getElementById('random-redirect-form');
         if (!form) return;
+
+        // --- Shortlink picker bootstrap ---
+        let allShortlinks = [];
+        const bootstrapEl = document.getElementById('rrm-bootstrap');
+        if (bootstrapEl) {
+          try {
+            const data = JSON.parse(bootstrapEl.textContent);
+            if (Array.isArray(data.shortlinks)) allShortlinks = data.shortlinks;
+          } catch (e) { /* keep allShortlinks empty on parse failure */ }
+        }
+
+        const picker      = document.getElementById('rrm-picker');
+        const pickerInput = document.getElementById('rrm-picker-q');
+        const pickerList  = document.getElementById('rrm-picker-list');
+        const pickerCancel = document.getElementById('rrm-picker-cancel');
+        let pickerTarget = null;
+
+        // Sleeky's plugin emits <meta name="sleeky_theme" content="light|dark">
+        // when active. Tag the picker so its CSS picks the matching variant
+        // instead of forcing a white modal onto a dark page.
+        if (picker) {
+          const sleekyMeta = document.querySelector('meta[name="sleeky_theme"]');
+          if (sleekyMeta && sleekyMeta.getAttribute('content') === 'dark') {
+            picker.classList.add('rrm-dark');
+          }
+        }
+
+        function openPicker(targetInput) {
+          if (!picker) return;
+          pickerTarget = targetInput;
+          if (pickerInput) pickerInput.value = '';
+          renderPickerList('');
+          if (typeof picker.showModal === 'function') picker.showModal();
+          else picker.setAttribute('open', '');
+          if (pickerInput) setTimeout(() => pickerInput.focus(), 30);
+        }
+
+        function closePicker() {
+          if (!picker) return;
+          if (typeof picker.close === 'function') picker.close();
+          else picker.removeAttribute('open');
+          pickerTarget = null;
+        }
+
+        function renderPickerList(query) {
+          if (!pickerList) return;
+          const q = (query || '').toLowerCase().trim();
+          const matches = (q === ''
+            ? allShortlinks
+            : allShortlinks.filter(l =>
+                (l.keyword || '').toLowerCase().includes(q) ||
+                (l.url     || '').toLowerCase().includes(q) ||
+                (l.title   || '').toLowerCase().includes(q)
+              )
+          ).slice(0, 200);
+
+          pickerList.innerHTML = '';
+          if (matches.length === 0) {
+            const li = document.createElement('li');
+            li.innerHTML = '<em>No matches.</em>';
+            pickerList.appendChild(li);
+            return;
+          }
+          for (const link of matches) {
+            const li = document.createElement('li');
+            li.dataset.shorturl = link.shorturl || '';
+            const kw = document.createElement('strong');
+            kw.textContent = link.keyword;
+            li.appendChild(kw);
+            const url = document.createElement('span');
+            url.className = 'rrm-picker-url';
+            url.textContent = link.url || '';
+            li.appendChild(url);
+            if (link.title) {
+              const t = document.createElement('span');
+              t.className = 'rrm-picker-title';
+              t.textContent = link.title;
+              li.appendChild(t);
+            }
+            pickerList.appendChild(li);
+          }
+        }
+
+        if (pickerInput) {
+          pickerInput.addEventListener('input', e => renderPickerList(e.target.value));
+          pickerInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const first = pickerList && pickerList.querySelector('li[data-shorturl]');
+              if (first) first.click();
+            } else if (e.key === 'Escape') {
+              closePicker();
+            }
+          });
+        }
+        if (pickerList) {
+          pickerList.addEventListener('click', e => {
+            const li = e.target.closest('li[data-shorturl]');
+            if (!li) return;
+            if (pickerTarget) {
+              pickerTarget.value = li.dataset.shorturl;
+              pickerTarget.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            closePicker();
+          });
+        }
+        if (pickerCancel) pickerCancel.addEventListener('click', closePicker);
 
         // --- Event Delegation ---
         form.addEventListener('click', function(event) {
@@ -454,6 +733,13 @@ CSS;
             const row = event.target.closest('.url-chance-row');
             const container = row.closest('.url-chances-container');
             removeUrlRow(row, container);
+          }
+          // Pick existing shortlink
+          else if (event.target.classList.contains('pick-shortlink')) {
+            event.preventDefault();
+            const row = event.target.closest('.url-chance-row');
+            const urlInput = row && row.querySelector('.url-input');
+            if (urlInput) openPicker(urlInput);
           }
         });
 
@@ -475,6 +761,10 @@ CSS;
                 }
              }
           }
+          // New-list keyword toggles the required-state of its URL rows.
+          if (event.target.id === 'new_list_keyword') {
+            syncNewListRequired();
+          }
         });
 
         // --- Initialization ---
@@ -482,6 +772,10 @@ CSS;
         document.querySelectorAll('.url-chances-container').forEach(container => {
           updatePercentageSum(container);
         });
+        // Apply the initial required-state to the new-list URL rows so a
+        // pre-filled keyword (e.g. after a server-side validation bounce)
+        // gets the required attribute right away.
+        syncNewListRequired();
       });
 
       function addNewUrlRow(container) {
@@ -492,14 +786,21 @@ CSS;
         newRow.style.display = 'flex';
         newRow.classList.remove('template');
 
-        // Clear template values and remove 'required' if it was added dynamically
         const urlInput = newRow.querySelector('.url-input');
         const chanceInput = newRow.querySelector('.chance-input');
-        if(urlInput) {
+        if (urlInput) {
             urlInput.value = '';
-            urlInput.removeAttribute('required'); // Only first row might be required initially
+            // Existing-list rows must always be required so the user
+            // can't silently submit an empty URL. New-list rows track
+            // the keyword field via syncNewListRequired() below.
+            const isNewListRow = (urlInput.name || '').startsWith('new_list_urls');
+            if (isNewListRow) {
+                urlInput.removeAttribute('required');
+            } else {
+                urlInput.setAttribute('required', '');
+            }
         }
-        if(chanceInput) chanceInput.value = '';
+        if (chanceInput) chanceInput.value = '';
 
         // Enable inputs (template inputs might be disabled)
         newRow.querySelectorAll('input').forEach(input => input.disabled = false);
@@ -507,8 +808,28 @@ CSS;
         // Insert before the template
         container.insertBefore(newRow, template);
 
-        updatePercentageSum(container); // Update sum after adding
-        if(urlInput) urlInput.focus(); // Focus new URL input
+        updatePercentageSum(container);
+        // Newly added new-list rows might still need to flip to required
+        // if the user has already typed a keyword.
+        syncNewListRequired();
+        if (urlInput) urlInput.focus();
+      }
+
+      // Make the New-Redirect-List section's URL inputs required only
+      // when the user has actually typed a new keyword. Otherwise the
+      // empty starter row in that section would block every save.
+      function syncNewListRequired() {
+        const kwInput = document.getElementById('new_list_keyword');
+        if (!kwInput) return;
+        const hasKeyword = kwInput.value.trim() !== '';
+        document
+          .querySelectorAll('input[name="new_list_urls[]"]')
+          .forEach((input) => {
+            const row = input.closest('.url-chance-row');
+            if (row && row.classList.contains('template')) return;
+            if (hasKeyword) input.setAttribute('required', '');
+            else input.removeAttribute('required');
+          });
       }
 
       function removeUrlRow(row, container) {
@@ -573,12 +894,12 @@ JS;
             return;
         }
 
-        // Verify nonce
-        yourls_verify_nonce(
-            "random_redirect_settings_nonce",
-            $_POST["nonce"] ?? "",
-            false // Do not die, just return false
-        ) or yourls_die("Invalid security token", "Error", 403);
+        // Verify nonce. Keep YOURLS' default yourls_die(..., 403) failure
+        // path, and only pass a string nonce so malformed nonce[]= payloads
+        // do not emit array-to-string warnings on PHP 8.4+.
+        $nonceInput = $_POST["nonce"] ?? "";
+        $nonce = is_string($nonceInput) ? $nonceInput : "";
+        yourls_verify_nonce("random_redirect_settings_nonce", $nonce);
 
         $currentSettings = $this->settings; // Use cached settings
         $newSettings = [];
@@ -589,6 +910,22 @@ JS;
             "errors" => [],
         ];
 
+        // --- Handle Reset-All Action ---
+        // Wipes every redirect list. The matching YOURLS shortlinks
+        // themselves are kept (same approach as per-list Delete) so a
+        // reset can't quietly drop unrelated keywords.
+        if (!empty($_POST["reset_all"])) {
+            if (empty($currentSettings)) {
+                yourls_add_notice("No redirect lists to remove.");
+            } elseif (yourls_update_option(self::OPTION_NAME, [])) {
+                yourls_add_notice("All redirect lists have been removed.");
+                $this->loadSettings();
+            } else {
+                yourls_add_notice("Error resetting settings.", "error");
+            }
+            return;
+        }
+
         // --- Handle Delete Action ---
         if (isset($_POST["delete_list"]) && !empty($_POST["delete_list"])) {
             $keywordToDelete = $this->sanitizeKeyword($_POST["delete_list"]);
@@ -597,12 +934,12 @@ JS;
                 // Note: We don't delete the base YOURLS shortlink automatically. Admin can do that manually if desired.
                 if (yourls_update_option(self::OPTION_NAME, $currentSettings)) {
                     yourls_add_notice(
-                        "Redirect list for keyword '{$keywordToDelete}' deleted successfully."
+                        "Redirect list for keyword “{$keywordToDelete}” deleted successfully."
                     );
                     $this->loadSettings(); // Reload settings after successful delete
                 } else {
                     yourls_add_notice(
-                        "Error deleting list for keyword '{$keywordToDelete}'.",
+                        "Error deleting list for keyword “{$keywordToDelete}”.",
                         "error"
                     );
                 }
@@ -610,7 +947,7 @@ JS;
                 return;
             } else {
                 yourls_add_notice(
-                    "Could not delete list: Keyword '{$keywordToDelete}' not found.",
+                    "Could not delete list: Keyword “{$keywordToDelete}” not found.",
                     "error"
                 );
                 return; // Stop if delete was intended but failed
@@ -629,7 +966,7 @@ JS;
                 if (!$oldKeyword || !$newKeyword) {
                     $messages[
                         "errors"
-                    ][] = "Invalid or empty keyword provided for an existing list (original: '{$oldKeyword}'). Skipped.";
+                    ][] = "Invalid or empty keyword provided for an existing list (original: “{$oldKeyword}”). Skipped.";
                     continue;
                 }
 
@@ -640,7 +977,7 @@ JS;
                 ) {
                     $messages[
                         "errors"
-                    ][] = "Keyword '{$newKeyword}' is used multiple times in this submission. Reverted change for '{$oldKeyword}'.";
+                    ][] = "Keyword “{$newKeyword}” is used multiple times in this submission. Reverted change for “{$oldKeyword}”.";
                     $newKeyword = $oldKeyword; // Keep the old keyword to avoid conflict
                 }
 
@@ -656,7 +993,7 @@ JS;
                 if (empty($urls)) {
                     $messages[
                         "errors"
-                    ][] = "No valid URLs provided for keyword '{$newKeyword}'. List not saved.";
+                    ][] = "No valid URLs provided for keyword “{$newKeyword}”. List not saved.";
                     continue; // Skip if no URLs
                 }
 
@@ -700,11 +1037,11 @@ JS;
             } elseif (isset($newSettings[$newKeyword])) {
                 $messages[
                     "errors"
-                ][] = "The new keyword '{$newKeyword}' conflicts with another list in this submission. New list skipped.";
+                ][] = "The new keyword “{$newKeyword}” conflicts with another list in this submission. New list skipped.";
             } elseif (empty($urls)) {
                 $messages[
                     "errors"
-                ][] = "No valid URLs provided for the new keyword '{$newKeyword}'. New list not saved.";
+                ][] = "No valid URLs provided for the new keyword “{$newKeyword}”. New list not saved.";
             } else {
                 // Ensure chances array matches urls array size
                 $chances = array_slice($chances, 0, count($urls));
@@ -728,12 +1065,23 @@ JS;
         }
 
         // --- Save Settings ---
-        // Only update if there were no critical errors preventing saving (like keyword conflicts handled above)
-        if (yourls_update_option(self::OPTION_NAME, $newSettings)) {
-            yourls_add_notice("Random Redirect settings saved successfully.");
-            $this->loadSettings(); // Reload settings after successful save
-        } else {
-            yourls_add_notice("Error saving settings.", "error");
+        // yourls_update_option() returns false in two cases that aren't
+        // errors: (1) its short-circuit `$newvalue === $oldvalue` check
+        // already detected no change, and (2) MySQL's UPDATE affects 0
+        // rows because the row is byte-identical (no CLIENT_FOUND_ROWS
+        // flag in YOURLS). Detect "nothing changed" up-front and stay
+        // silent — no notice at all — so the user doesn't see the
+        // misleading "Error saving settings." message after a no-op
+        // save. We still let ensureShortlinkExists() above run on every
+        // save so a manually deleted backing shortlink can be re-created
+        // by re-saving.
+        if ($newSettings !== $this->settings) {
+            if (yourls_update_option(self::OPTION_NAME, $newSettings)) {
+                yourls_add_notice("Random Redirect settings saved successfully.");
+                $this->loadSettings(); // Reload settings after successful save
+            } else {
+                yourls_add_notice("Error saving settings.", "error");
+            }
         }
 
         // --- Display Summary Notices ---
@@ -764,11 +1112,14 @@ JS;
             return "";
         }
         $keyword = trim($keyword);
-        // Allow letters, numbers, hyphen, underscore, forward slash
-        // Remove leading/trailing slashes and collapse multiple slashes
+        // Allow letters, numbers, hyphen, underscore, forward slash.
+        // Remove leading/trailing slashes and collapse multiple slashes.
         $keyword = trim($keyword, "/");
-        $keyword = preg_replace("#/+#", "/", $keyword);
-        if (preg_match('/^[a-zA-Z0-9-_\/]+$/', $keyword)) {
+        // preg_replace can return null on regex error — coalesce so PHP 8.1+
+        // doesn't emit a deprecation when the result reaches preg_match.
+        $collapsed = preg_replace("#/+#", "/", $keyword);
+        $keyword = is_string($collapsed) ? $collapsed : $keyword;
+        if (preg_match('/^[a-zA-Z0-9\-_\/]+$/', $keyword)) {
             return $keyword;
         }
         return ""; // Invalid characters
@@ -841,15 +1192,26 @@ JS;
         array &$errors
     ): void {
         if (empty($keyword) || empty($url)) {
-            $errors[] = "Cannot ensure shortlink: Invalid keyword or URL provided. Keyword: '{$keyword}'";
+            $errors[] = "Cannot ensure shortlink: Invalid keyword or URL provided. Keyword: “{$keyword}”";
             return;
         }
 
         // Check if keyword is reserved or already taken by YOURLS core/another plugin
         if (yourls_keyword_is_reserved($keyword)) {
-            $errors[] = "Keyword '{$keyword}' is reserved and cannot be used.";
+            $errors[] = "Keyword “{$keyword}” is reserved and cannot be used.";
             return;
         }
+
+        // If the first random URL is itself a YOURLS shortlink on this
+        // install, resolve it to its long URL before handing it to
+        // yourls_add_new_link(). YOURLS rejects shortlink-to-shortlink
+        // chains with "URL is a shortened URL", which surfaces in the
+        // admin as "Failed to create shortlink for 'foo': URL is een
+        // verkorte URL" the moment a user picks an existing shortlink
+        // from the picker as the first target. The random redirect
+        // itself still uses the original (short) URL — only the
+        // auto-created backing shortlink uses the resolved long URL.
+        $url = $this->resolveYourlsShortlink($url);
 
         $existingUrl = yourls_get_keyword_longurl($keyword);
 
@@ -861,7 +1223,7 @@ JS;
             } elseif ($result && isset($result["message"])) {
                 // Check if the failure was due to the keyword already existing (race condition?)
                 if (strpos($result["message"], "already exists") === false) {
-                    $errors[] = "Failed to create shortlink for '{$keyword}': {$result["message"]}";
+                    $errors[] = "Failed to create shortlink for “{$keyword}”: {$result["message"]}";
                 } else {
                     // Keyword exists now, maybe created by another process or race condition. Try updating.
                     $existingUrl = yourls_get_keyword_longurl($keyword); // Re-fetch
@@ -875,13 +1237,13 @@ JS;
                                 // This updates URL and optionally title
                                 $updated++;
                             } else {
-                                $errors[] = "Failed to update existing shortlink URL for '{$keyword}' after creation conflict.";
+                                $errors[] = "Failed to update existing shortlink URL for “{$keyword}” after creation conflict.";
                             }
                         }
                     }
                 }
             } else {
-                $errors[] = "Failed to create shortlink for '{$keyword}' (Unknown error).";
+                $errors[] = "Failed to create shortlink for “{$keyword}” (Unknown error).";
             }
         } elseif ($existingUrl !== $url) {
             // Shortlink exists, but URL is different, update it
@@ -897,11 +1259,67 @@ JS;
                     // This updates URL and optionally title
                     $updated++;
                 } else {
-                    $errors[] = "Failed to update existing shortlink URL for '{$keyword}'.";
+                    $errors[] = "Failed to update existing shortlink URL for “{$keyword}”.";
                 }
             }
         }
         // If $existingUrl === $url, do nothing, it's already correct.
+    }
+
+    /**
+     * If $url is a YOURLS shortlink on this install, swap it for its
+     * long URL. Any other URL is returned unchanged.
+     *
+     * Used to dodge YOURLS' "URL is a shortened URL" check inside
+     * yourls_add_new_link() when the auto-created backing shortlink for
+     * a random redirect would otherwise point at another shortlink on
+     * the same domain. Compares hosts case-insensitively because YOURLS
+     * normalises hostnames that way too.
+     *
+     * @param string $url Possibly a YOURLS short URL.
+     * @return string Long URL if resolvable, otherwise the original.
+     */
+    private function resolveYourlsShortlink(string $url): string
+    {
+        if ($url === "" || !defined("YOURLS_SITE")) {
+            return $url;
+        }
+
+        $siteHost = parse_url(YOURLS_SITE, PHP_URL_HOST);
+        $urlHost = parse_url($url, PHP_URL_HOST);
+        if (
+            !is_string($siteHost) ||
+            !is_string($urlHost) ||
+            strcasecmp($siteHost, $urlHost) !== 0
+        ) {
+            return $url;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        $keyword = trim(is_string($path) ? $path : "", "/");
+
+        // YOURLS can live in subdirectory (eg /links). Strip that
+        // install path from incoming short URL before keyword lookup.
+        $sitePath = trim((string) parse_url(YOURLS_SITE, PHP_URL_PATH), "/");
+        if ($sitePath !== "") {
+            if ($keyword === $sitePath) {
+                return $url;
+            }
+            $sitePrefix = $sitePath . "/";
+            if (strpos($keyword, $sitePrefix) === 0) {
+                $keyword = substr($keyword, strlen($sitePrefix));
+            }
+        }
+
+        if ($keyword === "") {
+            return $url;
+        }
+
+        $longUrl = yourls_get_keyword_longurl($keyword);
+        if (is_string($longUrl) && $longUrl !== "") {
+            return $longUrl;
+        }
+        return $url;
     }
 }
 
