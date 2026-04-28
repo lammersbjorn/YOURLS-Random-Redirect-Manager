@@ -6,8 +6,8 @@
  * Version: 3.2
  * Author: Bjorn Lammers
  * Author URI: https://github.com/lammersbjorn
- * License: BSD 3-Clause
- * License URI: https://opensource.org/licenses/BSD-3-Clause
+ * License: MIT
+ * License URI: https://opensource.org/licenses/MIT
  * Requires at least: YOURLS 1.7.3
  * Tested up to: YOURLS 1.10.3
  * Requires PHP: 7.4
@@ -1228,7 +1228,10 @@ JS;
                     // Keyword exists now, maybe created by another process or race condition. Try updating.
                     $existingUrl = yourls_get_keyword_longurl($keyword); // Re-fetch
                     if ($existingUrl !== false && $existingUrl !== $url) {
-                        if (yourls_edit_link_url($keyword, $url)) {
+                        if (
+                            function_exists("yourls_edit_link_url") &&
+                            yourls_edit_link_url($keyword, $url)
+                        ) {
                             // Use specific function if available (YOURLS 1.7.3+)
                             $updated++;
                         } else {
