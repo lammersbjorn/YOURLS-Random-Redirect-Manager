@@ -227,8 +227,28 @@ HTML;
 
       <p><input type="submit" value="Save All Settings" class="button button-primary"></p>
     </form>
+
+    <dialog id="rrm-picker" class="rrm-picker">
+      <h3>Pick a YOURLS shortlink</h3>
+      <input type="text" id="rrm-picker-q" placeholder="Search keyword, URL or title…" autocomplete="off">
+      <ul id="rrm-picker-list"></ul>
+      <div class="rrm-picker-actions">
+        <button type="button" id="rrm-picker-cancel" class="button button-secondary">Cancel</button>
+      </div>
+    </dialog>
     </div> <!-- .rrm-page -->
 HTML;
+
+        // Bootstrap payload for the shortlink picker. The JS inside
+        // displayAdminAssets() reads this on load.
+        $shortlinks = $this->getAllShortlinks();
+        $payload = json_encode(
+            ["shortlinks" => $shortlinks],
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+        echo "<script id=\"rrm-bootstrap\" type=\"application/json\">"
+            . ($payload !== false ? $payload : '{"shortlinks":[]}')
+            . "</script>\n";
     }
 
     /**
@@ -391,18 +411,62 @@ HTML;
     ): void {
         $style = $isTemplate ? 'style="display: none;"' : "";
         $class = $isTemplate ? "url-chance-row template" : "url-chance-row";
-        
+
         // Only make URL required for existing lists, not for new lists
         $urlRequired = !$isTemplate && empty($urlValue) && strpos($urlName, 'new_list_urls') === false ? "required" : "";
-    
+
         echo <<<HTML
         <div class="{$class}" {$style}>
           <input type="url" name="{$urlName}" value="{$urlValue}" class="text url-input" placeholder="https://example.com" {$urlRequired}>
+          <button type="button" class="pick-shortlink button button-secondary" aria-label="Pick a YOURLS shortlink">Pick…</button>
           <input type="number" name="{$chanceName}" value="{$chanceValue}" class="text chance-input" min="0" max="100" step="any" placeholder="%">
           <span class="percent-sign">%</span>
           <button type="button" class="remove-url button" aria-label="Remove URL">✕</button>
         </div>
     HTML;
+    }
+
+    /**
+     * Fetch all existing YOURLS shortlinks for the picker UI.
+     *
+     * Mirrors the approach used by the Link Front Page plugin: a single
+     * SELECT against the URL table, capped to keep the bootstrap payload
+     * sane on busy installs. Each row is enriched with the resolved short
+     * URL so the JS picker can drop it straight into the input field.
+     *
+     * @return array<int, array{keyword: string, url: string, title: string, shorturl: string}>
+     */
+    private function getAllShortlinks(): array
+    {
+        global $ydb;
+        $table = defined("YOURLS_DB_TABLE_URL") ? YOURLS_DB_TABLE_URL : "yourls_url";
+
+        try {
+            $rows = $ydb->fetchObjects(
+                "SELECT keyword, url, title FROM `{$table}` ORDER BY timestamp DESC LIMIT 5000"
+            );
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $links = [];
+        foreach ($rows as $row) {
+            $keyword = (string) ($row->keyword ?? "");
+            if ($keyword === "") {
+                continue;
+            }
+            $links[] = [
+                "keyword" => $keyword,
+                "url" => (string) ($row->url ?? ""),
+                "title" => (string) ($row->title ?? ""),
+                "shorturl" => yourls_link($keyword),
+            ];
+        }
+        return $links;
     }
 
     /**
@@ -415,8 +479,9 @@ HTML;
         // admin chrome. Colors use rgba()/inherit so the form looks right on
         // both vanilla YOURLS and the Sleeky admin theme (light + dark).
         $css = <<<'CSS'
-      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: rgba(0, 128, 255, 0.1); border-left: 4px solid #0080ff; color: inherit; }
+      .rrm-page .rrm-info-box { margin: 15px 0; padding: 10px 15px; border-radius: 5px; background-color: #e7f3ff; border-left: 4px solid #0080ff; color: #0d2a3e; }
       .rrm-page .rrm-info-box p { margin: 4px 0; }
+      .rrm-page .rrm-info-box strong { color: #062840; }
       .rrm-page .settings-group, .rrm-page .redirect-list-settings { margin: 20px 0; padding: 0; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 5px; background: transparent; }
       .rrm-page .settings-group { padding: 15px; }
       .rrm-page .redirect-lists-container { margin: 20px 0; display: flex; flex-direction: column; gap: 15px; }
@@ -438,7 +503,7 @@ HTML;
       .rrm-page .button.delete-list-button:hover { background-color: #c82333; }
       .rrm-page .url-chances-container { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
       .rrm-page .url-chance-row { display: flex; align-items: center; gap: 10px; width: 100%; }
-      .rrm-page .url-input { flex: 3; min-width: 250px; }
+      .rrm-page .url-input { flex: 3; min-width: 200px; }
       .rrm-page .chance-input { flex: 0 0 80px; width: 80px; text-align: right; }
       .rrm-page .percent-sign { flex: 0 0 10px; margin-right: 5px; opacity: 0.7; }
       .rrm-page .remove-url { flex: 0 0 25px; background-color: #f44336; color: #fff; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
@@ -447,7 +512,38 @@ HTML;
       .rrm-page .total-percentage { font-weight: bold; opacity: 0.8; }
       .rrm-page .percentage-sum { color: #008000; }
       .rrm-page .percentage-sum.error { color: #f44336; font-weight: bold; }
-      .rrm-page .add-url { cursor: pointer; }
+      /* Secondary buttons (Add URL, Pick…, Cancel). Translucent grays so the
+         button blends with both Sleeky's light and dark themes — text uses
+         `inherit` to pick up the surrounding admin chrome's foreground color. */
+      .rrm-page .button.button-secondary, .rrm-page .add-url, .rrm-page .pick-shortlink {
+        background-color: rgba(128, 128, 128, 0.12);
+        color: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.35);
+        padding: 6px 14px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 0.9em;
+        line-height: 1.4;
+        transition: background-color 0.15s, border-color 0.15s;
+      }
+      .rrm-page .button.button-secondary:hover, .rrm-page .add-url:hover, .rrm-page .pick-shortlink:hover {
+        background-color: rgba(128, 128, 128, 0.22);
+        border-color: rgba(128, 128, 128, 0.55);
+      }
+      .rrm-page .pick-shortlink { flex: 0 0 auto; padding: 6px 10px; font-size: 0.85em; }
+      /* Shortlink picker dialog */
+      .rrm-page .rrm-picker { width: min(600px, 92vw); max-height: 80vh; padding: 18px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 6px; background: #fff; color: #1a1a1a; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); }
+      .rrm-page .rrm-picker::backdrop { background: rgba(0, 0, 0, 0.45); }
+      .rrm-page .rrm-picker h3 { margin: 0 0 10px; font-size: 1.05em; }
+      .rrm-page .rrm-picker input[type="text"] { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 3px; box-sizing: border-box; margin-bottom: 10px; background: #fff; color: #1a1a1a; }
+      .rrm-page .rrm-picker ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 3px; }
+      .rrm-page .rrm-picker li { padding: 8px 10px; border-bottom: 1px solid rgba(128, 128, 128, 0.15); cursor: pointer; }
+      .rrm-page .rrm-picker li:last-child { border-bottom: none; }
+      .rrm-page .rrm-picker li:hover, .rrm-page .rrm-picker li.is-active { background: rgba(0, 128, 255, 0.08); }
+      .rrm-page .rrm-picker li strong { font-family: monospace; color: #0080ff; }
+      .rrm-page .rrm-picker .rrm-picker-url { display: block; font-size: 0.85em; color: #555; word-break: break-all; }
+      .rrm-page .rrm-picker .rrm-picker-title { display: block; font-size: 0.85em; color: #888; font-style: italic; }
+      .rrm-page .rrm-picker-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
       @media (max-width: 768px) {
         .rrm-page .redirect-list-row { flex-direction: column; gap: 10px; }
         .rrm-page .url-chance-row { flex-wrap: wrap; }
@@ -461,6 +557,103 @@ CSS;
       document.addEventListener('DOMContentLoaded', function() {
         const form = document.getElementById('random-redirect-form');
         if (!form) return;
+
+        // --- Shortlink picker bootstrap ---
+        let allShortlinks = [];
+        const bootstrapEl = document.getElementById('rrm-bootstrap');
+        if (bootstrapEl) {
+          try {
+            const data = JSON.parse(bootstrapEl.textContent);
+            if (Array.isArray(data.shortlinks)) allShortlinks = data.shortlinks;
+          } catch (e) { /* keep allShortlinks empty on parse failure */ }
+        }
+
+        const picker      = document.getElementById('rrm-picker');
+        const pickerInput = document.getElementById('rrm-picker-q');
+        const pickerList  = document.getElementById('rrm-picker-list');
+        const pickerCancel = document.getElementById('rrm-picker-cancel');
+        let pickerTarget = null;
+
+        function openPicker(targetInput) {
+          if (!picker) return;
+          pickerTarget = targetInput;
+          if (pickerInput) pickerInput.value = '';
+          renderPickerList('');
+          if (typeof picker.showModal === 'function') picker.showModal();
+          else picker.setAttribute('open', '');
+          if (pickerInput) setTimeout(() => pickerInput.focus(), 30);
+        }
+
+        function closePicker() {
+          if (!picker) return;
+          if (typeof picker.close === 'function') picker.close();
+          else picker.removeAttribute('open');
+          pickerTarget = null;
+        }
+
+        function renderPickerList(query) {
+          if (!pickerList) return;
+          const q = (query || '').toLowerCase().trim();
+          const matches = (q === ''
+            ? allShortlinks
+            : allShortlinks.filter(l =>
+                (l.keyword || '').toLowerCase().includes(q) ||
+                (l.url     || '').toLowerCase().includes(q) ||
+                (l.title   || '').toLowerCase().includes(q)
+              )
+          ).slice(0, 200);
+
+          pickerList.innerHTML = '';
+          if (matches.length === 0) {
+            const li = document.createElement('li');
+            li.innerHTML = '<em>No matches.</em>';
+            pickerList.appendChild(li);
+            return;
+          }
+          for (const link of matches) {
+            const li = document.createElement('li');
+            li.dataset.shorturl = link.shorturl || '';
+            const kw = document.createElement('strong');
+            kw.textContent = link.keyword;
+            li.appendChild(kw);
+            const url = document.createElement('span');
+            url.className = 'rrm-picker-url';
+            url.textContent = link.url || '';
+            li.appendChild(url);
+            if (link.title) {
+              const t = document.createElement('span');
+              t.className = 'rrm-picker-title';
+              t.textContent = link.title;
+              li.appendChild(t);
+            }
+            pickerList.appendChild(li);
+          }
+        }
+
+        if (pickerInput) {
+          pickerInput.addEventListener('input', e => renderPickerList(e.target.value));
+          pickerInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const first = pickerList && pickerList.querySelector('li[data-shorturl]');
+              if (first) first.click();
+            } else if (e.key === 'Escape') {
+              closePicker();
+            }
+          });
+        }
+        if (pickerList) {
+          pickerList.addEventListener('click', e => {
+            const li = e.target.closest('li[data-shorturl]');
+            if (!li) return;
+            if (pickerTarget) {
+              pickerTarget.value = li.dataset.shorturl;
+              pickerTarget.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            closePicker();
+          });
+        }
+        if (pickerCancel) pickerCancel.addEventListener('click', closePicker);
 
         // --- Event Delegation ---
         form.addEventListener('click', function(event) {
@@ -478,6 +671,13 @@ CSS;
             const row = event.target.closest('.url-chance-row');
             const container = row.closest('.url-chances-container');
             removeUrlRow(row, container);
+          }
+          // Pick existing shortlink
+          else if (event.target.classList.contains('pick-shortlink')) {
+            event.preventDefault();
+            const row = event.target.closest('.url-chance-row');
+            const urlInput = row && row.querySelector('.url-input');
+            if (urlInput) openPicker(urlInput);
           }
         });
 
