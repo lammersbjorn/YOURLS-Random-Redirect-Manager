@@ -1,0 +1,12 @@
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# Test and build artifacts
+test-suite/
+dist/
+staging/
