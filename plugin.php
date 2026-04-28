@@ -226,6 +226,16 @@ HTML;
       </div> <!-- .settings-group.add-new-list -->
 
       <p><input type="submit" value="Save All Settings" class="button button-primary"></p>
+
+      <div class="rrm-danger-zone">
+        <h4>Danger zone</h4>
+        <p>Removes every redirect list configured here. The matching YOURLS shortlinks themselves are kept and will need to be deleted manually if you don't want them anymore.</p>
+        <button type="submit" name="reset_all" value="1" formnovalidate
+          class="button reset-all-button"
+          onclick="return confirm('Are you sure you want to remove ALL redirect lists? This cannot be undone.')">
+          Reset all redirect lists
+        </button>
+      </div>
     </form>
 
     <dialog id="rrm-picker" class="rrm-picker">
@@ -531,34 +541,58 @@ HTML;
          button blends with both Sleeky's light and dark themes — text uses
          `inherit` to pick up the surrounding admin chrome's foreground color. */
       .rrm-page .button.button-secondary, .rrm-page .add-url, .rrm-page .pick-shortlink {
-        background-color: rgba(128, 128, 128, 0.12);
+        background-color: rgba(128, 128, 128, 0.18);
         color: inherit;
-        border: 1px solid rgba(128, 128, 128, 0.35);
+        border: 1px solid rgba(128, 128, 128, 0.5);
         padding: 6px 14px;
         border-radius: 3px;
         cursor: pointer;
         font-size: 0.9em;
         line-height: 1.4;
+        font-weight: 500;
         transition: background-color 0.15s, border-color 0.15s;
       }
       .rrm-page .button.button-secondary:hover, .rrm-page .add-url:hover, .rrm-page .pick-shortlink:hover {
-        background-color: rgba(128, 128, 128, 0.22);
-        border-color: rgba(128, 128, 128, 0.55);
+        background-color: rgba(128, 128, 128, 0.3);
+        border-color: rgba(128, 128, 128, 0.7);
       }
       .rrm-page .pick-shortlink { flex: 0 0 auto; padding: 6px 10px; font-size: 0.85em; }
-      /* Shortlink picker dialog */
+      /* Danger zone (reset all). Sits below the form's main Save button
+         and uses the same red accent as per-list Delete buttons. */
+      .rrm-page .rrm-danger-zone { margin-top: 25px; padding: 15px; border: 1px solid rgba(220, 53, 69, 0.4); border-radius: 5px; background-color: rgba(220, 53, 69, 0.06); }
+      .rrm-page .rrm-danger-zone h4 { margin: 0 0 6px; color: #dc3545; font-size: 1em; }
+      .rrm-page .rrm-danger-zone p { margin: 0 0 10px; opacity: 0.85; font-size: 0.9em; }
+      .rrm-page .button.reset-all-button { background-color: #dc3545; color: #fff; border: none; padding: 8px 16px; border-radius: 3px; cursor: pointer; font-weight: 600; }
+      .rrm-page .button.reset-all-button:hover { background-color: #c82333; }
+      /* Shortlink picker dialog (light variant — default) */
       .rrm-page .rrm-picker { width: min(600px, 92vw); max-height: 80vh; padding: 18px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 6px; background: #fff; color: #1a1a1a; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25); }
       .rrm-page .rrm-picker::backdrop { background: rgba(0, 0, 0, 0.45); }
-      .rrm-page .rrm-picker h3 { margin: 0 0 10px; font-size: 1.05em; }
+      .rrm-page .rrm-picker h3 { margin: 0 0 10px; font-size: 1.05em; color: inherit; }
       .rrm-page .rrm-picker input[type="text"] { width: 100%; padding: 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 3px; box-sizing: border-box; margin-bottom: 10px; background: #fff; color: #1a1a1a; }
-      .rrm-page .rrm-picker ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 3px; }
-      .rrm-page .rrm-picker li { padding: 8px 10px; border-bottom: 1px solid rgba(128, 128, 128, 0.15); cursor: pointer; }
+      .rrm-page .rrm-picker ul { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.2); border-radius: 3px; background: transparent; }
+      .rrm-page .rrm-picker li { padding: 8px 10px; border-bottom: 1px solid rgba(128, 128, 128, 0.15); cursor: pointer; color: inherit; }
       .rrm-page .rrm-picker li:last-child { border-bottom: none; }
       .rrm-page .rrm-picker li:hover, .rrm-page .rrm-picker li.is-active { background: rgba(0, 128, 255, 0.08); }
       .rrm-page .rrm-picker li strong { font-family: monospace; color: #0080ff; }
       .rrm-page .rrm-picker .rrm-picker-url { display: block; font-size: 0.85em; color: #555; word-break: break-all; }
       .rrm-page .rrm-picker .rrm-picker-title { display: block; font-size: 0.85em; color: #888; font-style: italic; }
       .rrm-page .rrm-picker-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+      /* Shortlink picker dialog — dark variant. JS adds `.rrm-dark` when
+         Sleeky's <meta name="sleeky_theme" content="dark"> is present so
+         the popup matches the surrounding dark chrome instead of slamming
+         a stark white panel into the middle of the page. */
+      .rrm-page .rrm-picker.rrm-dark { background: #2a2a2a; color: #e0e0e0; border-color: rgba(255, 255, 255, 0.15); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); }
+      .rrm-page .rrm-picker.rrm-dark::backdrop { background: rgba(0, 0, 0, 0.65); }
+      .rrm-page .rrm-picker.rrm-dark input[type="text"] { background: #1d1d1d; color: #e0e0e0; border-color: rgba(255, 255, 255, 0.2); }
+      .rrm-page .rrm-picker.rrm-dark input[type="text"]::placeholder { color: rgba(255, 255, 255, 0.4); }
+      .rrm-page .rrm-picker.rrm-dark ul { border-color: rgba(255, 255, 255, 0.12); }
+      .rrm-page .rrm-picker.rrm-dark li { border-color: rgba(255, 255, 255, 0.08); }
+      .rrm-page .rrm-picker.rrm-dark li:hover, .rrm-page .rrm-picker.rrm-dark li.is-active { background: rgba(0, 128, 255, 0.18); }
+      .rrm-page .rrm-picker.rrm-dark li strong { color: #4da3ff; }
+      .rrm-page .rrm-picker.rrm-dark .rrm-picker-url { color: #b0b0b0; }
+      .rrm-page .rrm-picker.rrm-dark .rrm-picker-title { color: #888; }
+      .rrm-page .rrm-picker.rrm-dark .button.button-secondary { background-color: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: #e0e0e0; }
+      .rrm-page .rrm-picker.rrm-dark .button.button-secondary:hover { background-color: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.4); }
       @media (max-width: 768px) {
         .rrm-page .redirect-list-row { flex-direction: column; gap: 10px; }
         .rrm-page .url-chance-row { flex-wrap: wrap; }
@@ -588,6 +622,16 @@ CSS;
         const pickerList  = document.getElementById('rrm-picker-list');
         const pickerCancel = document.getElementById('rrm-picker-cancel');
         let pickerTarget = null;
+
+        // Sleeky's plugin emits <meta name="sleeky_theme" content="light|dark">
+        // when active. Tag the picker so its CSS picks the matching variant
+        // instead of forcing a white modal onto a dark page.
+        if (picker) {
+          const sleekyMeta = document.querySelector('meta[name="sleeky_theme"]');
+          if (sleekyMeta && sleekyMeta.getAttribute('content') === 'dark') {
+            picker.classList.add('rrm-dark');
+          }
+        }
 
         function openPicker(targetInput) {
           if (!picker) return;
@@ -868,6 +912,22 @@ JS;
             "deleted" => 0,
             "errors" => [],
         ];
+
+        // --- Handle Reset-All Action ---
+        // Wipes every redirect list. The matching YOURLS shortlinks
+        // themselves are kept (same approach as per-list Delete) so a
+        // reset can't quietly drop unrelated keywords.
+        if (!empty($_POST["reset_all"])) {
+            if (empty($currentSettings)) {
+                yourls_add_notice("No redirect lists to remove.");
+            } elseif (yourls_update_option(self::OPTION_NAME, [])) {
+                yourls_add_notice("All redirect lists have been removed.");
+                $this->loadSettings();
+            } else {
+                yourls_add_notice("Error resetting settings.", "error");
+            }
+            return;
+        }
 
         // --- Handle Delete Action ---
         if (isset($_POST["delete_list"]) && !empty($_POST["delete_list"])) {
