@@ -937,12 +937,12 @@ JS;
                 // Note: We don't delete the base YOURLS shortlink automatically. Admin can do that manually if desired.
                 if (yourls_update_option(self::OPTION_NAME, $currentSettings)) {
                     yourls_add_notice(
-                        "Redirect list for keyword '{$keywordToDelete}' deleted successfully."
+                        "Redirect list for keyword “{$keywordToDelete}” deleted successfully."
                     );
                     $this->loadSettings(); // Reload settings after successful delete
                 } else {
                     yourls_add_notice(
-                        "Error deleting list for keyword '{$keywordToDelete}'.",
+                        "Error deleting list for keyword “{$keywordToDelete}”.",
                         "error"
                     );
                 }
@@ -950,7 +950,7 @@ JS;
                 return;
             } else {
                 yourls_add_notice(
-                    "Could not delete list: Keyword '{$keywordToDelete}' not found.",
+                    "Could not delete list: Keyword “{$keywordToDelete}” not found.",
                     "error"
                 );
                 return; // Stop if delete was intended but failed
@@ -969,7 +969,7 @@ JS;
                 if (!$oldKeyword || !$newKeyword) {
                     $messages[
                         "errors"
-                    ][] = "Invalid or empty keyword provided for an existing list (original: '{$oldKeyword}'). Skipped.";
+                    ][] = "Invalid or empty keyword provided for an existing list (original: “{$oldKeyword}”). Skipped.";
                     continue;
                 }
 
@@ -980,7 +980,7 @@ JS;
                 ) {
                     $messages[
                         "errors"
-                    ][] = "Keyword '{$newKeyword}' is used multiple times in this submission. Reverted change for '{$oldKeyword}'.";
+                    ][] = "Keyword “{$newKeyword}” is used multiple times in this submission. Reverted change for “{$oldKeyword}”.";
                     $newKeyword = $oldKeyword; // Keep the old keyword to avoid conflict
                 }
 
@@ -996,7 +996,7 @@ JS;
                 if (empty($urls)) {
                     $messages[
                         "errors"
-                    ][] = "No valid URLs provided for keyword '{$newKeyword}'. List not saved.";
+                    ][] = "No valid URLs provided for keyword “{$newKeyword}”. List not saved.";
                     continue; // Skip if no URLs
                 }
 
@@ -1040,11 +1040,11 @@ JS;
             } elseif (isset($newSettings[$newKeyword])) {
                 $messages[
                     "errors"
-                ][] = "The new keyword '{$newKeyword}' conflicts with another list in this submission. New list skipped.";
+                ][] = "The new keyword “{$newKeyword}” conflicts with another list in this submission. New list skipped.";
             } elseif (empty($urls)) {
                 $messages[
                     "errors"
-                ][] = "No valid URLs provided for the new keyword '{$newKeyword}'. New list not saved.";
+                ][] = "No valid URLs provided for the new keyword “{$newKeyword}”. New list not saved.";
             } else {
                 // Ensure chances array matches urls array size
                 $chances = array_slice($chances, 0, count($urls));
@@ -1195,13 +1195,13 @@ JS;
         array &$errors
     ): void {
         if (empty($keyword) || empty($url)) {
-            $errors[] = "Cannot ensure shortlink: Invalid keyword or URL provided. Keyword: '{$keyword}'";
+            $errors[] = "Cannot ensure shortlink: Invalid keyword or URL provided. Keyword: “{$keyword}”";
             return;
         }
 
         // Check if keyword is reserved or already taken by YOURLS core/another plugin
         if (yourls_keyword_is_reserved($keyword)) {
-            $errors[] = "Keyword '{$keyword}' is reserved and cannot be used.";
+            $errors[] = "Keyword “{$keyword}” is reserved and cannot be used.";
             return;
         }
 
@@ -1226,7 +1226,7 @@ JS;
             } elseif ($result && isset($result["message"])) {
                 // Check if the failure was due to the keyword already existing (race condition?)
                 if (strpos($result["message"], "already exists") === false) {
-                    $errors[] = "Failed to create shortlink for '{$keyword}': {$result["message"]}";
+                    $errors[] = "Failed to create shortlink for “{$keyword}”: {$result["message"]}";
                 } else {
                     // Keyword exists now, maybe created by another process or race condition. Try updating.
                     $existingUrl = yourls_get_keyword_longurl($keyword); // Re-fetch
@@ -1240,13 +1240,13 @@ JS;
                                 // This updates URL and optionally title
                                 $updated++;
                             } else {
-                                $errors[] = "Failed to update existing shortlink URL for '{$keyword}' after creation conflict.";
+                                $errors[] = "Failed to update existing shortlink URL for “{$keyword}” after creation conflict.";
                             }
                         }
                     }
                 }
             } else {
-                $errors[] = "Failed to create shortlink for '{$keyword}' (Unknown error).";
+                $errors[] = "Failed to create shortlink for “{$keyword}” (Unknown error).";
             }
         } elseif ($existingUrl !== $url) {
             // Shortlink exists, but URL is different, update it
@@ -1262,7 +1262,7 @@ JS;
                     // This updates URL and optionally title
                     $updated++;
                 } else {
-                    $errors[] = "Failed to update existing shortlink URL for '{$keyword}'.";
+                    $errors[] = "Failed to update existing shortlink URL for “{$keyword}”.";
                 }
             }
         }
