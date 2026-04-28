@@ -55,3 +55,12 @@ php -l includes/class-random-redirect-manager.php
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Releases
+
+GitHub Actions includes release automation in `.github/workflows/release.yml`.
+
+- **Stable release:** run the **Release** workflow manually and choose `minor` or `major`. The workflow bumps `plugin.php` version, commits it to `main`, tags `vX.Y.0`, builds an install zip, and creates a GitHub Release.
+- **Alpha release:** every non-bot push to `main` creates a prerelease tagged `alpha-<run>-<attempt>-<sha>` with an install zip.
+
+Release zips exclude development-only files such as `.github/`, `dev/`, `scripts/`, `tests/`, and `test-suite/`.
