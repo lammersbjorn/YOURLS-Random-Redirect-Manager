@@ -1,39 +1,38 @@
 # YOURLS Random Redirect Manager
 
-A plugin for YOURLS that redirects specific keywords to randomly selected URLs from predefined lists with customizable probability weights.
+A YOURLS plugin that routes configured keywords to one of multiple destination URLs, with optional weighted chances per URL.
 
 Listed in [![Listed in Awesome YOURLS!](https://img.shields.io/badge/Awesome-YOURLS-C5A3BE)](https://github.com/YOURLS/awesome-yourls/)
 
 ## Features
 
-- Create multiple redirect lists triggered by different keywords
-- Set custom probability percentages for each destination URL
-- Automatic shortlink creation for configured keywords
-- User-friendly admin interface with percentage calculation
-- Enable/disable redirect lists as needed
+- Per-keyword redirect lists with enable/disable toggle.
+- Weighted random destination selection.
+- Automatic create/update of matching YOURLS shortlinks.
+- Admin shortlink picker for quick URL selection.
+- Safe fallback behavior when weights are empty or invalid.
 
 ## Compatibility
 
-- YOURLS: requires 1.7.3+, tested up to 1.10.3
-- PHP: requires 7.4+, tested up to 8.5
+- YOURLS: requires 1.7.3+, tested up to 1.10.3.
+- PHP: requires 7.4+, tested up to 8.5.
+- Existing option key and stored option structure stay compatible: `random_redirect_settings`.
 - Uses fallback edit calls when newer YOURLS helper functions are unavailable.
+
+## Structure
+
+- `plugin.php`: YOURLS plugin header, direct-access guard, bootstrap include.
+- `includes/bootstrap.php`: guarded loader and plugin initializer.
+- `includes/class-random-redirect-manager.php`: runtime behavior, admin page, settings, redirect logic.
+- `assets/admin.css`: admin interface styles.
+- `assets/admin.js`: admin interface behavior for rows, totals, and shortlink picker.
+- `tests/`: lightweight PHPUnit coverage using the YOURLS plugin test-suite bootstrap.
 
 ## Installation
 
-1. Download the plugin
-2. Place the plugin folder in your `user/plugins` directory as `Random-Redirect-Manager`
-3. Activate the plugin in the YOURLS admin interface
-
-## Usage
-
-1. Go to "Random Redirect Manager" in your YOURLS admin panel
-2. Create redirect lists by specifying:
-   - A keyword that triggers the redirect
-   - Multiple destination URLs
-   - Optional percentage chances for each URL
-3. Save your settings
-
-When users visit your shortlink with the specified keyword, they'll be randomly redirected to one of the destination URLs based on your configured probabilities.
+1. Place the plugin folder in `user/plugins/` as `Random-Redirect-Manager`.
+2. Activate **Random Redirect Manager** in YOURLS admin.
+3. Open the plugin page and manage redirect lists.
 
 ## Configuration Details
 
@@ -46,25 +45,13 @@ When users visit your shortlink with the specified keyword, they'll be randomly 
 
 ## Testing
 
-Run the lightweight PHPUnit suite:
-
 ```bash
 phpunit -c tests/phpunit.xml
-```
-
-For plugin changes, also run:
-
-```bash
 php -l plugin.php
+php -l includes/bootstrap.php
+php -l includes/class-random-redirect-manager.php
 ```
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Example Use Cases
-
-- A/B testing different landing pages
-- Traffic distribution among multiple affiliate offers
-- Load balancing between different servers
-- Creating a "surprise" link that goes to different content each time
