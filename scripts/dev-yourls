@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE_FILE="$ROOT_DIR/dev/docker-compose.yml"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-yourls-rrm-dev}"
+YOURLS_PORT="${YOURLS_PORT:-8088}"
+YOURLS_SITE="${YOURLS_SITE:-http://localhost:${YOURLS_PORT}}"
+YOURLS_USER="${YOURLS_USER:-admin}"
+YOURLS_PASS="${YOURLS_PASS:-adminpass}"
+PLUGIN_PATH='Random-Redirect-Manager/plugin.php'
+
+compose() {
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" YOURLS_PORT="$YOURLS_PORT" YOURLS_SITE="$YOURLS_SITE" docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+wait_for_http() {
+  local url="$1"
+  local tries=60
+  until curl -fsS "$url" >/dev/null 2>&1; do
+    tries=$((tries - 1))
+    if [ "$tries" -le 0 ]; then
+      echo "Timed out waiting for $url" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+install_yourls() {
+  wait_for_http "$YOURLS_SITE/admin/install.php"
+  curl -fsS -X POST -d 'install=Install+YOURLS' "$YOURLS_SITE/admin/install.php" >/dev/null || true
+}
+
+mysql() {
+  compose exec -T db mariadb -u"${YOURLS_DB_USER:-yourls}" -p"${YOURLS_DB_PASS:-yourls}" "${YOURLS_DB_NAME:-yourls}" "$@"
+}
+
+activate_plugin() {
+  local serialized
+  serialized="$(compose exec -T yourls php -r 'echo serialize(["'"$PLUGIN_PATH"'"]);')"
+  mysql -e "UPDATE yourls_options SET option_value='${serialized}' WHERE option_name='active_plugins';"
+}
+
+seed_link() {
+  local keyword="$1"
+  local url="$2"
+  curl -fsS --get "$YOURLS_SITE/yourls-api.php" \
+    --data-urlencode "username=$YOURLS_USER" \
+    --data-urlencode "password=$YOURLS_PASS" \
+    --data-urlencode 'action=shorturl' \
+    --data-urlencode 'format=json' \
+    --data-urlencode "keyword=$keyword" \
+    --data-urlencode "url=$url" >/dev/null || true
+}
+
+seed_links() {
+  seed_link repo-awin https://github.com/lammersbjorn/YOURLS-Awin
+  seed_link repo-random https://github.com/lammersbjorn/YOURLS-Random-Redirect-Manager
+  seed_link repo-yourls https://github.com/YOURLS/YOURLS
+  seed_link repo-awesome-yourls https://github.com/YOURLS/awesome-yourls
+}
+
+seed_random_redirect_settings() {
+  local serialized
+  serialized="$(compose exec -T yourls php -r 'echo serialize([
+    "randomrepos" => [
+      "enabled" => true,
+      "urls" => [
+        "https://github.com/lammersbjorn/YOURLS-Awin",
+        "https://github.com/lammersbjorn/YOURLS-Random-Redirect-Manager",
+        "https://github.com/YOURLS/YOURLS",
+      ],
+      "chances" => [40.0, 40.0, 20.0],
+    ],
+  ]);')"
+  mysql -e "INSERT INTO yourls_options (option_name, option_value) VALUES ('random_redirect_settings', '${serialized}') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value);"
+  seed_link randomrepos https://example.com/random-repos-placeholder
+}
+
+start() {
+  compose up -d
+  install_yourls
+  activate_plugin
+  seed_links
+  seed_random_redirect_settings
+  echo "YOURLS ready: $YOURLS_SITE/admin/"
+  echo "Login: $YOURLS_USER / $YOURLS_PASS"
+  echo "Sample random redirect: $YOURLS_SITE/randomrepos"
+}
+
+case "${1:-up}" in
+  up|start)
+    start
+    ;;
+  stop)
+    compose stop
+    ;;
+  down)
+    compose down
+    ;;
+  reset)
+    compose down -v
+    start
+    ;;
+  logs)
+    compose logs -f "${2:-yourls}"
+    ;;
+  ps|status)
+    compose ps
+    ;;
+  *)
+    echo "Usage: $0 [up|start|stop|down|reset|logs|ps]" >&2
+    exit 2
+    ;;
+esac

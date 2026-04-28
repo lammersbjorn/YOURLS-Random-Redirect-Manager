@@ -82,6 +82,8 @@ jobs:
             --exclude='.git/' \
             --exclude='.gitignore' \
             --exclude='.github/' \
+            --exclude='dev/' \
+            --exclude='scripts/' \
             --exclude='tests/' \
             --exclude='test-suite/' \
             --exclude='dist/' \
@@ -94,7 +96,7 @@ jobs:
           set -euo pipefail
           unzip -l dist/YOURLS-Random-Redirect-Manager.zip
           unzip -l dist/YOURLS-Random-Redirect-Manager.zip | grep -q 'Random-Redirect-Manager/plugin.php'
-          if unzip -l dist/YOURLS-Random-Redirect-Manager.zip | grep -Eq 'Random-Redirect-Manager/(\.github|tests|test-suite)/'; then
+          if unzip -l dist/YOURLS-Random-Redirect-Manager.zip | grep -Eq 'Random-Redirect-Manager/(\.github|dev|scripts|tests|test-suite)/'; then
             echo "::error::Install zip contains development files"
             exit 1
           fi
