@@ -10,6 +10,10 @@ on:
         options:
           - minor
           - major
+      release_notes:
+        description: Optional release notes. Leave blank to auto-generate.
+        required: false
+        type: string
   push:
     branches: [main]
 
@@ -91,14 +95,34 @@ jobs:
           (cd staging && zip -rq "$GITHUB_WORKSPACE/dist/${ZIP_NAME}" "${PLUGIN_DIR}")
           unzip -l "dist/${ZIP_NAME}"
 
+      - name: Prepare release notes
+        id: release_notes
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RELEASE_NOTES" ]; then
+            printf '%s\n' "$RELEASE_NOTES" > release-notes.md
+            echo "mode=manual" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=generated" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            "dist/${ZIP_NAME}" \
-            --title "${{ steps.version.outputs.tag }}" \
-            --notes "Stable release ${{ steps.version.outputs.tag }}."
+          if [ "${{ steps.release_notes.outputs.mode }}" = "manual" ]; then
+            gh release create "${{ steps.version.outputs.tag }}" \
+              "dist/${ZIP_NAME}" \
+              --title "${{ steps.version.outputs.tag }}" \
+              --notes-file release-notes.md
+          else
+            gh release create "${{ steps.version.outputs.tag }}" \
+              "dist/${ZIP_NAME}" \
+              --title "${{ steps.version.outputs.tag }}" \
+              --generate-notes
+          fi
 
   alpha:
     name: Alpha release
@@ -140,4 +164,5 @@ jobs:
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "Alpha ${short_sha}" \
-            --notes "Automatic alpha release for ${GITHUB_SHA}."
+            --notes "Automatic alpha release for ${GITHUB_SHA}." \
+            --generate-notes
