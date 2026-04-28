@@ -1092,6 +1092,17 @@ JS;
             return;
         }
 
+        // If the first random URL is itself a YOURLS shortlink on this
+        // install, resolve it to its long URL before handing it to
+        // yourls_add_new_link(). YOURLS rejects shortlink-to-shortlink
+        // chains with "URL is a shortened URL", which surfaces in the
+        // admin as "Failed to create shortlink for 'foo': URL is een
+        // verkorte URL" the moment a user picks an existing shortlink
+        // from the picker as the first target. The random redirect
+        // itself still uses the original (short) URL — only the
+        // auto-created backing shortlink uses the resolved long URL.
+        $url = $this->resolveYourlsShortlink($url);
+
         $existingUrl = yourls_get_keyword_longurl($keyword);
 
         if ($existingUrl === false) {
@@ -1143,6 +1154,48 @@ JS;
             }
         }
         // If $existingUrl === $url, do nothing, it's already correct.
+    }
+
+    /**
+     * If $url is a YOURLS shortlink on this install, swap it for its
+     * long URL. Any other URL is returned unchanged.
+     *
+     * Used to dodge YOURLS' "URL is a shortened URL" check inside
+     * yourls_add_new_link() when the auto-created backing shortlink for
+     * a random redirect would otherwise point at another shortlink on
+     * the same domain. Compares hosts case-insensitively because YOURLS
+     * normalises hostnames that way too.
+     *
+     * @param string $url Possibly a YOURLS short URL.
+     * @return string Long URL if resolvable, otherwise the original.
+     */
+    private function resolveYourlsShortlink(string $url): string
+    {
+        if ($url === "" || !defined("YOURLS_SITE")) {
+            return $url;
+        }
+
+        $siteHost = parse_url(YOURLS_SITE, PHP_URL_HOST);
+        $urlHost = parse_url($url, PHP_URL_HOST);
+        if (
+            !is_string($siteHost) ||
+            !is_string($urlHost) ||
+            strcasecmp($siteHost, $urlHost) !== 0
+        ) {
+            return $url;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH);
+        $keyword = trim(is_string($path) ? $path : "", "/");
+        if ($keyword === "") {
+            return $url;
+        }
+
+        $longUrl = yourls_get_keyword_longurl($keyword);
+        if (is_string($longUrl) && $longUrl !== "") {
+            return $longUrl;
+        }
+        return $url;
     }
 }
 
