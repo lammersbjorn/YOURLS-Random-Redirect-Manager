@@ -240,11 +240,14 @@ HTML;
 HTML;
 
         // Bootstrap payload for the shortlink picker. The JS inside
-        // displayAdminAssets() reads this on load.
+        // displayAdminAssets() reads this on load. JSON_HEX_TAG escapes
+        // `<` and `>` to `<` / `>` so a user-controlled shortlink
+        // URL or title cannot smuggle a `</script>` sequence and break out
+        // of the inline JSON block. JSON.parse handles the escapes natively.
         $shortlinks = $this->getAllShortlinks();
         $payload = json_encode(
             ["shortlinks" => $shortlinks],
-            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG
         );
         echo "<script id=\"rrm-bootstrap\" type=\"application/json\">"
             . ($payload !== false ? $payload : '{"shortlinks":[]}')
