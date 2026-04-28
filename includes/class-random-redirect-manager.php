@@ -334,8 +334,11 @@ HTML;
 
         echo <<<HTML
                 </div> <!-- .url-chances-container -->
+                <div class="rrm-allocation-editor" aria-label="Traffic split editor"></div>
                 <div class="url-actions">
                   <button type="button" class="add-url button button-secondary">Add URL</button>
+                  <button type="button" class="equal-split button button-secondary">Equal split</button>
+                  <button type="button" class="normalize-split button button-secondary" title="Scale current chance values so they add up to 100%, while keeping the same relative split.">Scale to 100%</button>
                   <div class="total-percentage">
                     Total: <span class="percentage-sum">0</span>%
                   </div>
@@ -382,8 +385,11 @@ HTML;
 
         echo <<<HTML
         </div> <!-- .url-chances-container -->
+        <div class="rrm-allocation-editor" aria-label="Traffic split editor"></div>
         <div class="url-actions">
           <button type="button" class="add-url button button-secondary">Add URL</button>
+          <button type="button" class="equal-split button button-secondary">Equal split</button>
+          <button type="button" class="normalize-split button button-secondary" title="Scale current chance values so they add up to 100%, while keeping the same relative split.">Scale to 100%</button>
           <div class="total-percentage">
             Total: <span class="percentage-sum">0</span>%
           </div>
