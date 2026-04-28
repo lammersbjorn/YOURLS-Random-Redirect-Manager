@@ -279,7 +279,7 @@ HTML;
                 <input type="checkbox" name="list_enabled[{$escapedKeyword}]" value="1" {$checked}>
                 Enable
               </label>
-              <button type="submit" name="delete_list" value="{$escapedKeyword}"
+              <button type="submit" name="delete_list" value="{$escapedKeyword}" formnovalidate
                 class="button delete-list-button" onclick="return confirm('Are you sure you want to delete the list for keyword \'{$escapedKeyword}\'? This action is immediate and cannot be undone.')">
                 Delete List
               </button>
@@ -415,8 +415,15 @@ HTML;
         $style = $isTemplate ? 'style="display: none;"' : "";
         $class = $isTemplate ? "url-chance-row template" : "url-chance-row";
 
-        // Only make URL required for existing lists, not for new lists
-        $urlRequired = !$isTemplate && empty($urlValue) && strpos($urlName, 'new_list_urls') === false ? "required" : "";
+        // Visible rows of an *existing* redirect list always need a URL —
+        // an empty URL would silently drop the entire list server-side.
+        // Template rows stay un-required so their hidden inputs don't
+        // block submission. New-list rows are toggled by JS based on
+        // whether the user typed a keyword: requiring them
+        // unconditionally would block every save when the user only
+        // wants to update existing lists.
+        $isNewList = strpos($urlName, "new_list_urls") !== false;
+        $urlRequired = !$isTemplate && !$isNewList ? "required" : "";
 
         echo <<<HTML
         <div class="{$class}" {$style}>
@@ -707,6 +714,10 @@ CSS;
                 }
              }
           }
+          // New-list keyword toggles the required-state of its URL rows.
+          if (event.target.id === 'new_list_keyword') {
+            syncNewListRequired();
+          }
         });
 
         // --- Initialization ---
@@ -714,6 +725,10 @@ CSS;
         document.querySelectorAll('.url-chances-container').forEach(container => {
           updatePercentageSum(container);
         });
+        // Apply the initial required-state to the new-list URL rows so a
+        // pre-filled keyword (e.g. after a server-side validation bounce)
+        // gets the required attribute right away.
+        syncNewListRequired();
       });
 
       function addNewUrlRow(container) {
@@ -724,14 +739,21 @@ CSS;
         newRow.style.display = 'flex';
         newRow.classList.remove('template');
 
-        // Clear template values and remove 'required' if it was added dynamically
         const urlInput = newRow.querySelector('.url-input');
         const chanceInput = newRow.querySelector('.chance-input');
-        if(urlInput) {
+        if (urlInput) {
             urlInput.value = '';
-            urlInput.removeAttribute('required'); // Only first row might be required initially
+            // Existing-list rows must always be required so the user
+            // can't silently submit an empty URL. New-list rows track
+            // the keyword field via syncNewListRequired() below.
+            const isNewListRow = (urlInput.name || '').startsWith('new_list_urls');
+            if (isNewListRow) {
+                urlInput.removeAttribute('required');
+            } else {
+                urlInput.setAttribute('required', '');
+            }
         }
-        if(chanceInput) chanceInput.value = '';
+        if (chanceInput) chanceInput.value = '';
 
         // Enable inputs (template inputs might be disabled)
         newRow.querySelectorAll('input').forEach(input => input.disabled = false);
@@ -739,8 +761,28 @@ CSS;
         // Insert before the template
         container.insertBefore(newRow, template);
 
-        updatePercentageSum(container); // Update sum after adding
-        if(urlInput) urlInput.focus(); // Focus new URL input
+        updatePercentageSum(container);
+        // Newly added new-list rows might still need to flip to required
+        // if the user has already typed a keyword.
+        syncNewListRequired();
+        if (urlInput) urlInput.focus();
+      }
+
+      // Make the New-Redirect-List section's URL inputs required only
+      // when the user has actually typed a new keyword. Otherwise the
+      // empty starter row in that section would block every save.
+      function syncNewListRequired() {
+        const kwInput = document.getElementById('new_list_keyword');
+        if (!kwInput) return;
+        const hasKeyword = kwInput.value.trim() !== '';
+        document
+          .querySelectorAll('input[name="new_list_urls[]"]')
+          .forEach((input) => {
+            const row = input.closest('.url-chance-row');
+            if (row && row.classList.contains('template')) return;
+            if (hasKeyword) input.setAttribute('required', '');
+            else input.removeAttribute('required');
+          });
       }
 
       function removeUrlRow(row, container) {
