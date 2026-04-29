@@ -32,14 +32,78 @@
       .rrm-page .percent-sign { flex: 0 0 10px; margin-right: 5px; opacity: 0.7; }
       .rrm-page .remove-url { flex: 0 0 25px; background-color: #f44336; color: #fff; border: none; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
       .rrm-page .remove-url:hover { background-color: #e53935; }
-      .rrm-page .url-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+      .rrm-page .url-actions { display: flex; justify-content: flex-start; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+      .rrm-page .url-actions .total-percentage { margin-left: auto; }
       .rrm-page .total-percentage { font-weight: bold; opacity: 0.8; }
       .rrm-page .percentage-sum { color: #008000; }
       .rrm-page .percentage-sum.error { color: #f44336; font-weight: bold; }
+      .rrm-page .rrm-allocation-editor { margin: 10px 0 8px; }
+      .rrm-page .rrm-allocation-editor.is-hidden { display: none; }
+      .rrm-page .rrm-allocation-label { margin: 0 0 6px; font-size: 0.86em; font-weight: 600; opacity: 0.72; }
+      .rrm-page .rrm-allocation-track {
+        position: relative;
+        height: 18px;
+        border: 1px solid rgba(128, 128, 128, 0.24);
+        border-radius: 4px;
+        background: rgba(128, 128, 128, 0.1);
+        overflow: visible;
+        touch-action: pan-y;
+      }
+      .rrm-page .rrm-allocation-segment {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        min-width: 0;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 0;
+        font-weight: 500;
+        line-height: 1;
+        white-space: nowrap;
+        opacity: 0.78;
+      }
+      .rrm-page .rrm-allocation-segment:first-child { border-radius: 3px 0 0 3px; }
+      .rrm-page .rrm-allocation-segment:last-of-type { border-radius: 0 3px 3px 0; }
+      .rrm-page .rrm-allocation-segment.is-tiny span { opacity: 0; }
+      .rrm-page .rrm-allocation-handle {
+        position: absolute;
+        top: 50%;
+        width: 10px;
+        height: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.95);
+        border-radius: 999px;
+        background: #334155;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.24);
+        cursor: ew-resize;
+        touch-action: none;
+      }
+      .rrm-page .rrm-allocation-handle::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 44px;
+        height: 44px;
+        transform: translate(-50%, -50%);
+      }
+      .rrm-page .rrm-allocation-handle:focus {
+        outline: 3px solid rgba(0, 128, 255, 0.45);
+        outline-offset: 2px;
+      }
+      .rrm-page .rrm-allocation-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; font-size: 0.82em; opacity: 0.75; }
+      .rrm-page .rrm-allocation-meta span { display: inline-flex; align-items: center; gap: 4px; }
+      .rrm-page .rrm-allocation-meta span::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rrm-segment-color); }
+      .rrm-page .rrm-allocation-empty {
+        font-size: 0.9em;
+        opacity: 0.72;
+      }
       /* Secondary buttons (Add URL, Pick..., Cancel). Translucent grays so the
          button blends with both Sleeky's light and dark themes - text uses
          `inherit` to pick up the surrounding admin chrome's foreground color. */
-      .rrm-page .button.button-secondary, .rrm-page .add-url, .rrm-page .pick-shortlink {
+      .rrm-page .button.button-secondary, .rrm-page .add-url, .rrm-page .pick-shortlink, .rrm-page .equal-split, .rrm-page .normalize-split {
         background-color: rgba(128, 128, 128, 0.18);
         color: inherit;
         border: 1px solid rgba(128, 128, 128, 0.5);
@@ -51,7 +115,7 @@
         font-weight: 500;
         transition: background-color 0.15s, border-color 0.15s;
       }
-      .rrm-page .button.button-secondary:hover, .rrm-page .add-url:hover, .rrm-page .pick-shortlink:hover {
+      .rrm-page .button.button-secondary:hover, .rrm-page .add-url:hover, .rrm-page .pick-shortlink:hover, .rrm-page .equal-split:hover, .rrm-page .normalize-split:hover {
         background-color: rgba(128, 128, 128, 0.3);
         border-color: rgba(128, 128, 128, 0.7);
       }
@@ -97,4 +161,6 @@
         .rrm-page .url-chance-row { flex-wrap: wrap; }
         .rrm-page .url-input { min-width: 200px; }
         .rrm-page .list-actions { flex-direction: column; align-items: flex-start; gap: 5px; }
+        .rrm-page .url-actions .total-percentage { flex-basis: 100%; margin-left: 0; }
+        .rrm-page .rrm-allocation-track { height: 22px; }
       }
